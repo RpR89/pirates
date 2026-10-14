@@ -1,210 +1,238 @@
 import Phaser from 'phaser';
-import { LOCAL_PLAYER, PLAYER_COLORS, gameSeed } from '../config';
-import { GameSession } from '../net/session';
-import { LocalTransport } from '../net/transport';
-import { FONT_KEY } from '../render/font';
-import { COLONY, FORT, GALLEON, SLOOP, VILLAGE } from '../render/sprites';
-import { TILE_PX, createMapTexture, createPixelTexture } from '../render/textures';
-import { AIController } from '../sim/ai';
-import type { Command } from '../sim/commands';
-import { Tile, isLand, tileAt, type Point } from '../sim/map';
-import { COMBAT, SHIPS, type ShipKind } from '../sim/rules';
+import type { GameController } from '../game/controller';
+import type { Keyboard } from '../game/keyboard';
+import { drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
+import { toNumber } from '../render/color';
+import { drawShip } from '../render/shipArt';
+import { CHUNK_TILES, TILE_PX, renderChunk, waterDistanceField } from '../render/terrain';
+import { FACTIONS } from '../sim/factions';
+import { isLand, type Point } from '../sim/map';
+import { BUILDINGS, CITY, SHIPS, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
+import { buildProblem } from '../sim/simulation';
 import {
-  createGame,
-  foundingSite,
+  NEUTRAL,
+  buildingOwner,
+  foundingProblem,
+  getCity,
   isEnemy,
-  villageMaxHp,
+  look,
+  shipMaxHp,
+  type Building,
   type GameEvent,
+  type GameState,
   type PlayerId,
   type Ship,
-  type Village,
 } from '../sim/state';
-import type { HudScene } from './HudScene';
-
-const SHIP_SPRITES: Record<ShipKind, readonly string[]> = { sloop: SLOOP, galleon: GALLEON, colony: COLONY };
 
 interface ShipVisual {
   sprite: Phaser.GameObjects.Image;
+  shadow: Phaser.GameObjects.Image;
   prev: Point;
   cur: Point;
+  angle: number;
   owner: PlayerId;
+  wakeAt: number;
 }
 
-interface VillageVisual {
+interface BuildingVisual {
   sprite: Phaser.GameObjects.Image;
   key: string;
+  smokeAt: number;
 }
 
-export interface Selection {
-  ships: number[];
-  villageId: number | null;
-  /** Nave non nostra selezionata solo per vederne le informazioni. */
-  inspectShipId: number | null;
+export interface WorldSceneData {
+  controller: GameController;
+  keyboard: Keyboard;
 }
 
-const color = (hex: string) => Phaser.Display.Color.HexStringToColor(hex).color;
+const lookId = (state: GameState, owner: PlayerId) => state.players[owner]?.faction ?? 'neutral';
 
 export class WorldScene extends Phaser.Scene {
-  session!: GameSession;
-  selection: Selection = { ships: [], villageId: null, inspectShipId: null };
-  boardingMode = false;
-
-  private shipVisuals = new Map<number, ShipVisual>();
-  private villageVisuals = new Map<number, VillageVisual>();
+  private ctl!: GameController;
+  private keyboard!: Keyboard;
+  private field!: Float32Array;
+  private chunksTodo: { x: number; y: number }[] = [];
+  private ships = new Map<number, ShipVisual>();
+  private buildings = new Map<number, BuildingVisual>();
   private overlay!: Phaser.GameObjects.Graphics;
+  private ghost!: Phaser.GameObjects.Image;
+  private labels: Phaser.GameObjects.Text[] = [];
+  private labelIndex = 0;
   private lastTick = -1;
   private dragStart: { world: Point; screen: Point } | null = null;
   private dragEnd: Point | null = null;
-  private keys!: Record<string, Phaser.Input.Keyboard.Key>;
-  private hud!: HudScene;
+  private panStart: { x: number; y: number; scrollX: number; scrollY: number } | null = null;
+  private pointerTile: Point = { x: 0, y: 0 };
+  private hoverShip: number | null = null;
 
   constructor() {
     super('World');
   }
 
-  get me(): PlayerId {
-    return this.session.localPlayer;
+  init(data: WorldSceneData): void {
+    this.ctl = data.controller;
+    this.keyboard = data.keyboard;
+  }
+
+  get state(): GameState {
+    return this.ctl.state;
   }
 
   create(): void {
-    const seed = gameSeed();
-    const state = createGame(seed, [
-      { name: 'TU', color: PLAYER_COLORS[0] },
-      { name: 'BARBANERA', color: PLAYER_COLORS[1] },
-    ]);
-    this.session = new GameSession(state, LOCAL_PLAYER, new LocalTransport(), [new AIController(2)]);
-    this.selection = { ships: [], villageId: null, inspectShipId: null };
-    this.shipVisuals.clear();
-    this.villageVisuals.clear();
+    const { map } = this.state;
+    this.field = waterDistanceField(map);
+    this.ships.clear();
+    this.buildings.clear();
     this.lastTick = -1;
 
-    for (const p of state.players) {
-      for (const kind of Object.keys(SHIP_SPRITES) as ShipKind[]) {
-        createPixelTexture(this, `ship-${kind}-${p.id}`, SHIP_SPRITES[kind], p.color);
-      }
-      createPixelTexture(this, `village-${p.id}`, VILLAGE, p.color);
-      createPixelTexture(this, `fort-${p.id}`, FORT, p.color);
-    }
+    const chunksX = Math.ceil(map.width / CHUNK_TILES);
+    const chunksY = Math.ceil(map.height / CHUNK_TILES);
+    for (let y = 0; y < chunksY; y++) for (let x = 0; x < chunksX; x++) this.chunksTodo.push({ x, y });
 
-    const mapKey = `map-${seed}`;
-    if (!this.textures.exists(mapKey)) createMapTexture(this, mapKey, state.map);
-    this.add.image(0, 0, mapKey).setOrigin(0, 0).setDepth(0);
-    this.addWaves();
+    this.overlay = this.add.graphics().setDepth(80);
+    this.ghost = this.add.image(0, 0, '__DEFAULT').setOrigin(0, 0).setDepth(85).setVisible(false);
 
-    this.overlay = this.add.graphics().setDepth(50);
-
-    const worldW = state.map.width * TILE_PX;
-    const worldH = state.map.height * TILE_PX;
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, worldW, worldH);
+    cam.setBounds(0, 0, map.width * TILE_PX, map.height * TILE_PX);
+    cam.setZoom(2);
     cam.setRoundPixels(true);
-    const home = state.villages.find((v) => v.owner === this.me);
-    if (home) this.centerOnTile(home.x, home.y);
+    cam.setBackgroundColor('#1f4f80');
+    this.ctl.centerOn = (p) => cam.centerOn(p.x * TILE_PX, p.y * TILE_PX);
+    const home = this.state.cities.find((c) => c.owner === this.ctl.me);
+    if (home) this.ctl.centerOn({ x: home.cx + 0.5, y: home.cy + 2 });
+
+    // I blocchi vicini alla visuale per primi, così la partita è subito giocabile.
+    this.sortChunks();
+    for (let i = 0; i < 6; i++) this.buildNextChunk();
 
     this.setupInput();
-    this.scene.launch('Hud');
-    this.hud = this.scene.get('Hud') as HudScene;
   }
 
-  private addWaves(): void {
-    const { map } = this.session.state;
-    const rng = new Phaser.Math.RandomDataGenerator([String(this.session.state.seed)]);
-    for (let i = 0; i < 260; i++) {
-      const tx = rng.between(0, map.width - 1);
-      const ty = rng.between(0, map.height - 1);
-      if (tileAt(map, tx, ty) !== Tile.Deep) continue;
-      const wave = this.add.image(tx * TILE_PX + 4, ty * TILE_PX + 4, 'wave').setDepth(1).setAlpha(0.7);
-      this.tweens.add({
-        targets: wave,
-        x: wave.x + 4,
-        alpha: 0.2,
-        duration: rng.between(1400, 2600),
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-        delay: rng.between(0, 1500),
-      });
+  // ------------------------------------------------------------ texture
+
+  private sortChunks(): void {
+    const view = this.cameras.main.worldView;
+    const cx = (view.centerX || 0) / (TILE_PX * CHUNK_TILES);
+    const cy = (view.centerY || 0) / (TILE_PX * CHUNK_TILES);
+    this.chunksTodo.sort((a, b) => Math.hypot(a.x + 0.5 - cx, a.y + 0.5 - cy) - Math.hypot(b.x + 0.5 - cx, b.y + 0.5 - cy));
+  }
+
+  private buildNextChunk(): void {
+    const next = this.chunksTodo.shift();
+    if (!next) return;
+    const chunk = renderChunk(this.state.map, this.field, next.x, next.y);
+    const key = `terrain-${this.state.seed}-${next.x}-${next.y}`;
+    if (!this.textures.exists(key)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = chunk.width;
+      canvas.height = chunk.height;
+      canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(chunk.data), chunk.width, chunk.height), 0, 0);
+      this.textures.addCanvas(key, canvas);
     }
+    const size = CHUNK_TILES * TILE_PX;
+    this.add.image(next.x * size, next.y * size, key).setOrigin(0, 0).setDepth(0);
+  }
+
+  private shipTexture(cls: ShipClass, owner: PlayerId): string {
+    const id = lookId(this.state, owner);
+    const key = `ship-${cls}-${id}`;
+    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawShip(cls, look(this.state, owner).colors).toCanvas());
+    return key;
+  }
+
+  private buildingTexture(b: Building): string {
+    const s = BUILDINGS[b.kind];
+    if (b.buildLeft > 0) {
+      const key = `site-${s.w}x${s.h}`;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, drawConstruction(s.w, s.h).toCanvas());
+      return key;
+    }
+    return this.kindTexture(b.kind, buildingOwner(this.state, b));
+  }
+
+  private kindTexture(kind: BuildingKind, owner: PlayerId): string {
+    const key = `bld-${kind}-${lookId(this.state, owner)}`;
+    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawBuilding(kind, look(this.state, owner).colors).toCanvas());
+    return key;
   }
 
   // ------------------------------------------------------------ input
 
   private setupInput(): void {
-    const kb = this.input.keyboard!;
-    this.keys = kb.addKeys('UP,DOWN,LEFT,RIGHT,W,A,S,D') as Record<string, Phaser.Input.Keyboard.Key>;
-    kb.on('keydown-B', () => this.toggleBoarding());
-    kb.on('keydown-X', () => this.stopSelected());
-    kb.on('keydown-H', () => this.goHome());
-    kb.on('keydown-P', () => (this.session.paused = !this.session.paused));
-    kb.on('keydown-ESC', () => this.clearSelection());
-    kb.on('keydown-R', () => {
-      if (this.session.state.winner !== null) window.location.search = '';
+    const kb = this.keyboard;
+    kb.on('b', () => this.ctl.toggleBoarding());
+    kb.on('x', () => this.ctl.stopSelected());
+    kb.on('h', () => this.ctl.goHome());
+    kb.on('p', () => this.ctl.togglePause());
+    kb.on('l', () => this.ctl.selectedShips().some((s) => s.soldiers >= 1) && this.ctl.setMode({ type: 'land' }));
+    kb.on('escape', () => {
+      if (this.ctl.mode.type !== 'normal') this.ctl.setMode({ type: 'normal' });
+      else this.ctl.select({ kind: 'none' });
     });
 
+    this.input.mouse?.disableContextMenu();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (this.hud?.isOverUI(p.x, p.y)) return;
-      if (p.rightButtonDown()) {
-        this.orderAt(p.worldX, p.worldY);
-      } else if (p.leftButtonDown()) {
-        this.dragStart = { world: { x: p.worldX, y: p.worldY }, screen: { x: p.x, y: p.y } };
-        this.dragEnd = null;
+      if (p.middleButtonDown()) {
+        const cam = this.cameras.main;
+        this.panStart = { x: p.x, y: p.y, scrollX: cam.scrollX, scrollY: cam.scrollY };
+        return;
       }
+      if (p.rightButtonDown()) {
+        if (this.ctl.mode.type !== 'normal') this.ctl.setMode({ type: 'normal' });
+        else this.orderAt(p.worldX, p.worldY);
+        return;
+      }
+      if (this.ctl.mode.type === 'place') {
+        this.placeAt(p.event.shiftKey);
+        return;
+      }
+      if (this.ctl.mode.type === 'land') {
+        this.landAt(p.worldX, p.worldY);
+        return;
+      }
+      this.dragStart = { world: { x: p.worldX, y: p.worldY }, screen: { x: p.x, y: p.y } };
+      this.dragEnd = null;
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      this.pointerTile = { x: Math.floor(p.worldX / TILE_PX), y: Math.floor(p.worldY / TILE_PX) };
+      this.hoverShip = this.shipAt(p.worldX, p.worldY)?.id ?? null;
+      if (this.panStart) {
+        const cam = this.cameras.main;
+        cam.scrollX = this.panStart.scrollX - (p.x - this.panStart.x) / cam.zoom;
+        cam.scrollY = this.panStart.scrollY - (p.y - this.panStart.y) / cam.zoom;
+      }
       if (this.dragStart && p.leftButtonDown()) this.dragEnd = { x: p.worldX, y: p.worldY };
     });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      this.panStart = null;
       if (!this.dragStart) return;
       const start = this.dragStart;
       this.dragStart = null;
       this.dragEnd = null;
       const moved = Math.abs(p.x - start.screen.x) + Math.abs(p.y - start.screen.y);
-      if (moved < 4) this.selectAt(p.worldX, p.worldY, p.event.shiftKey);
+      if (moved < 5) this.selectAt(p.worldX, p.worldY, p.event.shiftKey);
       else this.selectBox(start.world, { x: p.worldX, y: p.worldY }, p.event.shiftKey);
     });
-    this.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+    this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const cam = this.cameras.main;
-      cam.setZoom(Phaser.Math.Clamp(cam.zoom + (dy > 0 ? -1 : 1), 1, 3));
+      const before = cam.getWorldPoint(p.x, p.y);
+      cam.setZoom(Phaser.Math.Clamp(cam.zoom + (dy > 0 ? -1 : 1), 1, 4));
+      cam.preRender();
+      const after = cam.getWorldPoint(p.x, p.y);
+      cam.scrollX += before.x - after.x;
+      cam.scrollY += before.y - after.y;
     });
-  }
-
-  toggleBoarding(): void {
-    this.boardingMode = !this.boardingMode;
-  }
-
-  stopSelected(): void {
-    if (this.selection.ships.length) this.session.issue({ type: 'stop', shipIds: this.selection.ships });
-  }
-
-  goHome(): void {
-    const v = this.session.state.villages.find((x) => x.owner === this.me);
-    if (v) {
-      this.centerOnTile(v.x, v.y);
-      this.selection = { ships: [], villageId: v.id, inspectShipId: null };
-    }
-  }
-
-  clearSelection(): void {
-    this.selection = { ships: [], villageId: null, inspectShipId: null };
-  }
-
-  centerOnTile(tx: number, ty: number): void {
-    this.cameras.main.centerOn(tx * TILE_PX + TILE_PX / 2, ty * TILE_PX + TILE_PX / 2);
-  }
-
-  issue(command: Command): void {
-    this.session.issue(command);
   }
 
   private shipAt(wx: number, wy: number): Ship | null {
     let best: Ship | null = null;
-    let bestD = 9;
-    for (const s of this.session.state.ships) {
-      const v = this.shipVisuals.get(s.id);
-      const x = v ? v.sprite.x : s.x * TILE_PX;
-      const y = v ? v.sprite.y : s.y * TILE_PX;
-      const d = Math.hypot(x - wx, y - wy);
-      if (d < bestD) {
+    let bestD = Infinity;
+    for (const s of this.state.ships) {
+      const v = this.ships.get(s.id);
+      if (!v) continue;
+      const reach = Math.max(8, SHIPS[s.cls].length * 0.45);
+      const d = Math.hypot(v.sprite.x - wx, v.sprite.y - wy);
+      if (d < reach && d < bestD) {
         best = s;
         bestD = d;
       }
@@ -212,269 +240,411 @@ export class WorldScene extends Phaser.Scene {
     return best;
   }
 
-  private villageAt(wx: number, wy: number): Village | null {
-    for (const v of this.session.state.villages) {
-      const cx = (v.x + 0.5) * TILE_PX;
-      const cy = (v.y + 0.5) * TILE_PX;
-      if (Math.abs(wx - cx) <= 9 && Math.abs(wy - cy) <= 9) return v;
+  private buildingAt(wx: number, wy: number): Building | null {
+    for (const b of this.state.buildings) {
+      const s = BUILDINGS[b.kind];
+      const x0 = b.x * TILE_PX;
+      const y0 = b.y * TILE_PX - (b.buildLeft > 0 ? 4 : buildingOverhang(b.kind) / 2);
+      if (wx >= x0 && wx < x0 + s.w * TILE_PX && wy >= y0 && wy < (b.y + s.h) * TILE_PX) return b;
     }
     return null;
   }
 
   private selectAt(wx: number, wy: number, additive: boolean): void {
     const ship = this.shipAt(wx, wy);
-    if (ship && ship.owner === this.me) {
-      const ships = additive ? [...new Set([...this.selection.ships, ship.id])] : [ship.id];
-      this.selection = { ships, villageId: null, inspectShipId: null };
-      return;
+    const me = this.ctl.me;
+    if (ship && ship.owner === me) {
+      const current = this.ctl.selection.kind === 'ships' && additive ? this.ctl.selection.ids : [];
+      this.ctl.select({ kind: 'ships', ids: [...new Set([...current, ship.id])] });
+    } else if (ship) {
+      this.ctl.select({ kind: 'ship', id: ship.id });
+    } else {
+      const b = this.buildingAt(wx, wy);
+      if (b) this.ctl.select({ kind: 'building', id: b.id });
+      else if (!additive) this.ctl.select({ kind: 'none' });
     }
-    if (ship) {
-      this.selection = { ships: [], villageId: null, inspectShipId: ship.id };
-      return;
-    }
-    const village = this.villageAt(wx, wy);
-    if (village) {
-      this.selection = { ships: [], villageId: village.id, inspectShipId: null };
-      return;
-    }
-    if (!additive) this.clearSelection();
   }
 
   private selectBox(a: Point, b: Point, additive: boolean): void {
-    const x0 = Math.min(a.x, b.x);
-    const x1 = Math.max(a.x, b.x);
-    const y0 = Math.min(a.y, b.y);
-    const y1 = Math.max(a.y, b.y);
-    const ids = this.session.state.ships
+    const [x0, x1] = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
+    const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
+    const ids = this.state.ships
       .filter((s) => {
-        if (s.owner !== this.me) return false;
-        const v = this.shipVisuals.get(s.id);
-        const x = v ? v.sprite.x : s.x * TILE_PX;
-        const y = v ? v.sprite.y : s.y * TILE_PX;
-        return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+        const v = this.ships.get(s.id);
+        return s.owner === this.ctl.me && v && v.sprite.x >= x0 && v.sprite.x <= x1 && v.sprite.y >= y0 && v.sprite.y <= y1;
       })
       .map((s) => s.id);
-    const ships = additive ? [...new Set([...this.selection.ships, ...ids])] : ids;
-    this.selection = { ships, villageId: null, inspectShipId: null };
+    const current = this.ctl.selection.kind === 'ships' && additive ? this.ctl.selection.ids : [];
+    const all = [...new Set([...current, ...ids])];
+    this.ctl.select(all.length ? { kind: 'ships', ids: all } : { kind: 'none' });
   }
 
   private orderAt(wx: number, wy: number): void {
-    const state = this.session.state;
-    const mine = this.selection.ships
-      .map((id) => state.ships.find((s) => s.id === id))
-      .filter((s): s is Ship => !!s && s.owner === this.me);
-    if (!mine.length) return;
-    const ids = mine.map((s) => s.id);
+    const ships = this.ctl.selectedShips();
+    if (!ships.length) return;
+    const ids = ships.map((s) => s.id);
+    const me = this.ctl.me;
     const tx = wx / TILE_PX;
     const ty = wy / TILE_PX;
 
     const ship = this.shipAt(wx, wy);
-    if (ship && isEnemy(this.me, ship.owner)) {
-      this.issue({ type: 'attackShip', shipIds: ids, targetId: ship.id, capture: this.boardingMode });
-      this.flashMarker(wx, wy, 0xff4040);
+    if (ship && isEnemy(me, ship.owner)) {
+      this.ctl.issue({ type: 'attackShip', shipIds: ids, targetId: ship.id, board: this.ctl.boarding });
+      this.marker(wx, wy, this.ctl.boarding ? 0xffcd75 : 0xff5a4a);
       return;
     }
-    const village = this.villageAt(wx, wy);
-    if (village && village.owner !== this.me) {
-      this.issue({ type: 'attackVillage', shipIds: ids, targetId: village.id });
-      this.flashMarker(wx, wy, 0xff4040);
+    const b = this.buildingAt(wx, wy);
+    if (b && buildingOwner(this.state, b) !== me) {
+      this.ctl.issue({ type: 'attackBuilding', shipIds: ids, targetId: b.id });
+      this.marker(wx, wy, 0xff5a4a);
       return;
     }
-    const colony = mine.find((s) => s.kind === 'colony');
-    if (colony && isLand(state.map, Math.floor(tx), Math.floor(ty))) {
-      if (foundingSite(state, tx, ty)) {
-        this.issue({ type: 'found', shipId: colony.id, x: tx, y: ty });
-        this.flashMarker(wx, wy, 0xffcd75);
-      } else {
-        this.hud.message('QUI NON SI PUO\' FONDARE: SERVE UNA COSTA LIBERA LONTANA DAGLI ALTRI VILLAGGI');
+    const colony = ships.find((s) => s.colonists > 0);
+    if (colony && isLand(this.state.map, Math.floor(tx), Math.floor(ty)) && !b) {
+      const problem = foundingProblem(this.state, tx, ty);
+      if (problem) this.ctl.message(`Non si può fondare qui: ${problem.toLowerCase()}.`, 'bad');
+      else {
+        this.ctl.issue({ type: 'found', shipId: colony.id, x: tx, y: ty });
+        this.marker(wx, wy, 0xffcd75);
       }
       return;
     }
-    this.issue({ type: 'move', shipIds: ids, x: tx, y: ty });
-    this.flashMarker(wx, wy, 0xffffff);
+    this.ctl.issue({ type: 'move', shipIds: ids, x: tx, y: ty });
+    this.marker(wx, wy, 0xffffff);
   }
 
-  private flashMarker(x: number, y: number, tint: number): void {
-    const m = this.add.image(x, y, 'marker').setDepth(60).setTint(tint);
-    this.tweens.add({ targets: m, alpha: 0, scale: 1.6, duration: 450, onComplete: () => m.destroy() });
+  private landAt(wx: number, wy: number): void {
+    const b = this.buildingAt(wx, wy);
+    const city = b && getCity(this.state, b.cityId);
+    const ships = this.ctl.selectedShips().filter((s) => s.soldiers >= 1);
+    if (!city || city.owner === this.ctl.me) {
+      this.ctl.message('Scegli una città nemica o neutrale su cui sbarcare.', 'info');
+      return;
+    }
+    if (!ships.length) {
+      this.ctl.message('Nessuna nave selezionata ha soldati a bordo.', 'bad');
+      this.ctl.setMode({ type: 'normal' });
+      return;
+    }
+    this.ctl.issue({ type: 'land', shipIds: ships.map((s) => s.id), cityId: city.id });
+    this.ctl.setMode({ type: 'normal' });
+    this.marker(wx, wy, 0xffcd75);
+  }
+
+  private placementOrigin(kind: BuildingKind): Point {
+    const s = BUILDINGS[kind];
+    return { x: this.pointerTile.x - Math.floor((s.w - 1) / 2), y: this.pointerTile.y - Math.floor((s.h - 1) / 2) };
+  }
+
+  private placeAt(keepPlacing: boolean): void {
+    const mode = this.ctl.mode;
+    if (mode.type !== 'place') return;
+    const at = this.placementOrigin(mode.kind);
+    const problem = buildProblem(this.state, this.ctl.me, mode.cityId, mode.kind, at.x, at.y);
+    if (problem) {
+      this.ctl.message(problem, 'bad');
+      return;
+    }
+    this.ctl.issue({ type: 'placeBuilding', cityId: mode.cityId, kind: mode.kind, x: at.x, y: at.y });
+    if (!keepPlacing) this.ctl.setMode({ type: 'normal' });
+  }
+
+  private marker(x: number, y: number, tint: number): void {
+    const g = this.add.graphics().setDepth(90);
+    g.lineStyle(1, tint, 1);
+    g.strokeCircle(0, 0, 4);
+    g.setPosition(x, y);
+    this.tweens.add({ targets: g, scale: 2.2, alpha: 0, duration: 500, onComplete: () => g.destroy() });
   }
 
   // ------------------------------------------------------------ ciclo
 
-  update(_time: number, delta: number): void {
+  update(time: number, delta: number): void {
     this.panCamera(delta);
-    this.session.advance(delta);
-    const events = this.session.drainEvents();
-    this.syncVillages();
-    this.syncShips();
-    this.cleanSelection();
+    if (this.chunksTodo.length) {
+      this.sortChunks();
+      this.buildNextChunk();
+    }
+    this.ctl.session.advance(delta);
+    const events = this.ctl.session.drainEvents();
+    this.ctl.cleanSelection();
+    this.syncBuildings(time);
+    this.syncShips(time);
     this.playEvents(events);
-    this.hud?.handleEvents(events);
+    if (events.length) this.ctl.handleEvents(events);
     this.drawOverlay();
+    this.updateGhost();
+
+    const view = this.cameras.main.worldView;
+    this.ctl.view = { x: view.x / TILE_PX, y: view.y / TILE_PX, w: view.width / TILE_PX, h: view.height / TILE_PX };
   }
 
   private panCamera(delta: number): void {
-    const k = this.keys;
+    const k = this.keyboard;
     const cam = this.cameras.main;
-    const speed = (220 / cam.zoom) * (delta / 1000);
-    if (k.LEFT.isDown || k.A.isDown) cam.scrollX -= speed;
-    if (k.RIGHT.isDown || k.D.isDown) cam.scrollX += speed;
-    if (k.UP.isDown || k.W.isDown) cam.scrollY -= speed;
-    if (k.DOWN.isDown || k.S.isDown) cam.scrollY += speed;
+    const speed = (500 / cam.zoom) * (delta / 1000);
+    if (k.isDown('arrowleft', 'a')) cam.scrollX -= speed;
+    if (k.isDown('arrowright', 'd')) cam.scrollX += speed;
+    if (k.isDown('arrowup', 'w')) cam.scrollY -= speed;
+    if (k.isDown('arrowdown', 's')) cam.scrollY += speed;
   }
 
-  private syncVillages(): void {
+  private syncBuildings(time: number): void {
     const seen = new Set<number>();
-    for (const v of this.session.state.villages) {
-      seen.add(v.id);
-      const key = `${v.buildings.forte > 0 ? 'fort' : 'village'}-${v.owner}`;
-      let vis = this.villageVisuals.get(v.id);
+    for (const b of this.state.buildings) {
+      seen.add(b.id);
+      const key = this.buildingTexture(b);
+      const s = BUILDINGS[b.kind];
+      let vis = this.buildings.get(b.id);
       if (!vis) {
-        const sprite = this.add.image((v.x + 0.5) * TILE_PX, (v.y + 0.5) * TILE_PX - 2, key).setDepth(10);
-        vis = { sprite, key };
-        this.villageVisuals.set(v.id, vis);
-      } else if (vis.key !== key) {
+        const sprite = this.add.image(0, 0, key).setOrigin(0, 1);
+        vis = { sprite, key, smokeAt: 0 };
+        this.buildings.set(b.id, vis);
+      }
+      if (vis.key !== key) {
         vis.sprite.setTexture(key);
         vis.key = key;
       }
+      vis.sprite.setPosition(b.x * TILE_PX, (b.y + s.h) * TILE_PX).setDepth(10 + (b.y + s.h) / 1000);
+      // Fumo dagli edifici danneggiati.
+      if (b.buildLeft <= 0 && b.hp < s.hp * 0.5 && time > vis.smokeAt) {
+        vis.smokeAt = time + 250 + Math.random() * 300;
+        this.smoke((b.x + Math.random() * s.w) * TILE_PX, (b.y + Math.random() * s.h) * TILE_PX);
+      }
     }
-    for (const [id, vis] of this.villageVisuals) {
+    for (const [id, vis] of this.buildings) {
       if (!seen.has(id)) {
         vis.sprite.destroy();
-        this.villageVisuals.delete(id);
+        this.buildings.delete(id);
       }
     }
   }
 
-  private syncShips(): void {
-    const state = this.session.state;
+  private syncShips(time: number): void {
+    const state = this.state;
     const tickChanged = state.tick !== this.lastTick;
     this.lastTick = state.tick;
-    const alpha = Math.min(1, this.session.alpha);
+    const alpha = Math.min(1, this.ctl.session.alpha);
     const seen = new Set<number>();
 
     for (const s of state.ships) {
       seen.add(s.id);
-      let vis = this.shipVisuals.get(s.id);
+      let vis = this.ships.get(s.id);
       if (!vis) {
-        const sprite = this.add.image(s.x * TILE_PX, s.y * TILE_PX, `ship-${s.kind}-${s.owner}`);
-        vis = { sprite, prev: { x: s.x, y: s.y }, cur: { x: s.x, y: s.y }, owner: s.owner };
-        this.shipVisuals.set(s.id, vis);
+        const key = this.shipTexture(s.cls, s.owner);
+        const shadow = this.add.image(0, 0, key).setTint(0x0b1f3a).setTintMode(Phaser.TintModes.FILL).setAlpha(0.35).setDepth(19);
+        const sprite = this.add.image(0, 0, key).setDepth(30);
+        vis = { sprite, shadow, prev: { x: s.x, y: s.y }, cur: { x: s.x, y: s.y }, angle: Math.PI / 2, owner: s.owner, wakeAt: 0 };
+        this.ships.set(s.id, vis);
       }
       if (tickChanged) {
         vis.prev = vis.cur;
         vis.cur = { x: s.x, y: s.y };
       }
       if (vis.owner !== s.owner) {
-        vis.sprite.setTexture(`ship-${s.kind}-${s.owner}`);
+        const key = this.shipTexture(s.cls, s.owner);
+        vis.sprite.setTexture(key);
+        vis.shadow.setTexture(key);
         vis.owner = s.owner;
       }
-      const x = vis.prev.x + (vis.cur.x - vis.prev.x) * alpha;
-      const y = vis.prev.y + (vis.cur.y - vis.prev.y) * alpha;
+      const x = (vis.prev.x + (vis.cur.x - vis.prev.x) * alpha) * TILE_PX;
+      const y = (vis.prev.y + (vis.cur.y - vis.prev.y) * alpha) * TILE_PX;
       const dx = vis.cur.x - vis.prev.x;
-      if (Math.abs(dx) > 0.01) vis.sprite.setFlipX(dx < 0);
-      // Leggero beccheggio, solo estetico.
-      const bob = Math.round(Math.sin((this.time.now + s.id * 400) / 500) * 0.6);
-      vis.sprite.setPosition(Math.round(x * TILE_PX), Math.round(y * TILE_PX) - 3 + bob);
-      vis.sprite.setDepth(20 + y / 1000);
+      const dy = vis.cur.y - vis.prev.y;
+      const moving = Math.abs(dx) + Math.abs(dy) > 0.001;
+      if (moving) {
+        const target = Math.atan2(dy, dx);
+        let diff = target - vis.angle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        vis.angle += diff * Math.min(1, 0.12 * (this.game.loop.delta / 16.7));
+      }
+      const rot = vis.angle + Math.PI / 2;
+      const bob = Math.sin((time + s.id * 500) / 700) * 0.04;
+      vis.sprite.setPosition(Math.round(x), Math.round(y)).setRotation(rot + bob);
+      vis.shadow.setPosition(Math.round(x) + 2, Math.round(y) + 3).setRotation(rot + bob);
+
+      if (moving && time > vis.wakeAt) {
+        vis.wakeAt = time + 90;
+        const back = SHIPS[s.cls].length / 2;
+        this.wake(x - Math.cos(vis.angle) * back, y - Math.sin(vis.angle) * back, vis.angle);
+      }
     }
-    for (const [id, vis] of this.shipVisuals) {
+    for (const [id, vis] of this.ships) {
       if (!seen.has(id)) {
         vis.sprite.destroy();
-        this.shipVisuals.delete(id);
+        vis.shadow.destroy();
+        this.ships.delete(id);
       }
     }
   }
 
-  private cleanSelection(): void {
-    const state = this.session.state;
-    const sel = this.selection;
-    sel.ships = sel.ships.filter((id) => state.ships.some((s) => s.id === id && s.owner === this.me));
-    if (sel.villageId !== null && !state.villages.some((v) => v.id === sel.villageId)) sel.villageId = null;
-    if (sel.inspectShipId !== null && !state.ships.some((s) => s.id === sel.inspectShipId)) sel.inspectShipId = null;
-  }
+  // ------------------------------------------------------------ effetti
 
-  private playEvents(events: GameEvent[]): void {
-    for (const e of events) {
-      if (e.type === 'shot') {
-        const ball = this.add.rectangle(e.from.x * TILE_PX, e.from.y * TILE_PX - 3, 2, 2, 0x1a1c2c).setDepth(40);
-        this.tweens.add({
-          targets: ball,
-          x: e.to.x * TILE_PX,
-          y: e.to.y * TILE_PX - 3,
-          duration: 220,
-          onComplete: () => {
-            ball.destroy();
-            this.puff(e.to.x * TILE_PX, e.to.y * TILE_PX - 3, 0xef7d57, 3);
-          },
-        });
-        this.puff(e.from.x * TILE_PX, e.from.y * TILE_PX - 4, 0xf4f4f4, 2);
-      } else if (e.type === 'shipSunk') {
-        this.puff(e.x * TILE_PX, e.y * TILE_PX - 3, 0x6b3e22, 8);
-        this.puff(e.x * TILE_PX, e.y * TILE_PX - 3, 0xc9f1ff, 6);
-      } else if (e.type === 'shipCaptured') {
-        const vis = this.shipVisuals.get(e.shipId);
-        if (vis) this.floatText(vis.sprite.x, vis.sprite.y - 10, 'ABBORDATA!');
-      } else if (e.type === 'villageCaptured' || e.type === 'villageFounded') {
-        const vis = this.villageVisuals.get(e.villageId);
-        if (vis) this.floatText(vis.sprite.x, vis.sprite.y - 12, e.type === 'villageFounded' ? 'FONDATO!' : 'CONQUISTATO!');
-      }
-    }
-  }
-
-  private puff(x: number, y: number, tint: number, count: number): void {
-    for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + Math.random();
-      const dist = 3 + Math.random() * 5;
-      const p = this.add.rectangle(x, y, 1, 1, tint).setDepth(41);
+  private wake(x: number, y: number, angle: number): void {
+    for (const side of [-1, 1]) {
+      const px = x + Math.cos(angle + Math.PI / 2) * side * 2;
+      const py = y + Math.sin(angle + Math.PI / 2) * side * 2;
+      const p = this.add.rectangle(px, py, 1, 1, 0xeefaf6, 0.8).setDepth(18);
       this.tweens.add({
         targets: p,
-        x: x + Math.cos(angle) * dist,
-        y: y + Math.sin(angle) * dist,
+        x: px + Math.cos(angle + Math.PI / 2) * side * 4,
+        y: py + Math.sin(angle + Math.PI / 2) * side * 4,
         alpha: 0,
-        duration: 300 + Math.random() * 300,
+        duration: 900,
         onComplete: () => p.destroy(),
       });
     }
   }
 
-  private floatText(x: number, y: number, text: string): void {
-    const t = this.add.bitmapText(Math.round(x), Math.round(y), FONT_KEY, text).setOrigin(0.5).setDepth(70);
-    this.tweens.add({ targets: t, y: y - 10, alpha: 0, duration: 1400, onComplete: () => t.destroy() });
+  private smoke(x: number, y: number): void {
+    const p = this.add.circle(x, y, 2 + Math.random() * 2, 0x55524c, 0.6).setDepth(60);
+    this.tweens.add({ targets: p, y: y - 14, x: x + 5, alpha: 0, scale: 2, duration: 1600, onComplete: () => p.destroy() });
+  }
+
+  private puff(x: number, y: number, color: number, count: number, spread = 6): void {
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count + Math.random();
+      const d = spread * (0.5 + Math.random());
+      const p = this.add.rectangle(x, y, 2, 2, color).setDepth(70);
+      this.tweens.add({ targets: p, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 350 + Math.random() * 350, onComplete: () => p.destroy() });
+    }
+  }
+
+  private floatText(x: number, y: number, text: string, color: string): void {
+    const t = this.add
+      .text(Math.round(x), Math.round(y), text, { fontFamily: '"Pixelify Sans"', fontSize: '10px', color, stroke: '#1b1712', strokeThickness: 3 })
+      .setOrigin(0.5)
+      .setDepth(95)
+      .setResolution(4);
+    this.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
+  }
+
+  private playEvents(events: GameEvent[]): void {
+    for (const e of events) {
+      switch (e.type) {
+        case 'shot': {
+          const fx = e.from.x * TILE_PX;
+          const fy = e.from.y * TILE_PX;
+          const tx = e.to.x * TILE_PX + (Math.random() - 0.5) * 6;
+          const ty = e.to.y * TILE_PX + (Math.random() - 0.5) * 6;
+          this.puff(fx, fy, 0xf2efe6, 4, 4);
+          const ball = this.add.circle(fx, fy, 1.2, 0x1b1712).setDepth(75);
+          this.tweens.add({
+            targets: ball, x: tx, y: ty, duration: 260,
+            onComplete: () => {
+              ball.destroy();
+              this.puff(tx, ty, 0xef7d57, 5, 5);
+              this.puff(tx, ty, 0x55524c, 3, 7);
+            },
+          });
+          break;
+        }
+        case 'shipSunk':
+          this.puff(e.x * TILE_PX, e.y * TILE_PX, 0x6b4a2e, 12, 12);
+          this.puff(e.x * TILE_PX, e.y * TILE_PX, 0xeefaf6, 10, 16);
+          break;
+        case 'shipCaptured': {
+          const v = this.ships.get(e.shipId);
+          if (v) this.floatText(v.sprite.x, v.sprite.y - 18, 'Arrembaggio!', '#ffcd75');
+          break;
+        }
+        case 'buildingDestroyed':
+          this.puff(e.x * TILE_PX, e.y * TILE_PX, 0x8a6a40, 14, 14);
+          for (let i = 0; i < 5; i++) this.smoke(e.x * TILE_PX + (Math.random() - 0.5) * 10, e.y * TILE_PX);
+          break;
+        case 'cityCaptured':
+        case 'cityFounded': {
+          const city = getCity(this.state, e.cityId);
+          if (city) this.floatText((city.cx + 0.5) * TILE_PX, city.cy * TILE_PX - 20, e.type === 'cityFounded' ? 'Fondata!' : 'Conquistata!', '#ffcd75');
+          break;
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ sovrimpressioni
+
+  private label(x: number, y: number, text: string, color = '#f1e3c2'): void {
+    let t = this.labels[this.labelIndex];
+    if (!t) {
+      t = this.add
+        .text(0, 0, '', { fontFamily: '"Pixelify Sans"', fontSize: '10px', color, stroke: '#1b1712', strokeThickness: 3 })
+        .setOrigin(0.5, 1)
+        .setDepth(96)
+        .setResolution(4);
+      this.labels.push(t);
+    }
+    this.labelIndex++;
+    const zoom = this.cameras.main.zoom;
+    t.setText(text).setColor(color).setPosition(Math.round(x), Math.round(y)).setScale(2 / zoom).setVisible(true);
   }
 
   private drawOverlay(): void {
     const g = this.overlay;
-    const state = this.session.state;
+    const state = this.state;
+    const me = this.ctl.me;
+    const sel = this.ctl.selection;
     g.clear();
+    this.labelIndex = 0;
 
-    const selected = new Set(this.selection.ships);
-    if (this.selection.inspectShipId !== null) selected.add(this.selection.inspectShipId);
+    const selectedShips = new Set(sel.kind === 'ships' ? sel.ids : sel.kind === 'ship' ? [sel.id] : []);
 
     for (const s of state.ships) {
-      const vis = this.shipVisuals.get(s.id);
-      if (!vis) continue;
-      const { x, y, width, height } = vis.sprite;
-      const max = SHIPS[s.kind].hp;
-      const isSel = selected.has(s.id);
+      const v = this.ships.get(s.id);
+      if (!v) continue;
+      const max = shipMaxHp(state, s);
+      const isSel = selectedShips.has(s.id);
+      const color = toNumber(FACTION_COLOR(state, s.owner));
+      const len = SHIPS[s.cls].length;
       if (isSel) {
-        this.brackets(g, x - width / 2 - 1, y - height / 2 - 1, width + 2, height + 2, color(state.players[s.owner].color));
-        if (s.owner === this.me) this.orderLine(g, s, x, y);
+        g.lineStyle(1, color, 1);
+        g.strokeCircle(v.sprite.x, v.sprite.y, len * 0.6);
+        if (s.owner === me) this.orderLine(g, s, v.sprite.x, v.sprite.y);
       }
-      if (isSel || s.hp < max) {
-        const boardable = s.hp <= max * COMBAT.captureHpRatio;
-        this.hpBar(g, x, y - height / 2 - 3, 12, s.hp / max, boardable);
+      if (isSel || s.hp < max || this.hoverShip === s.id) {
+        this.hpBar(g, v.sprite.x, v.sprite.y - len * 0.6 - 4, 18, s.hp / max);
+      }
+      if (isSel || this.hoverShip === s.id) this.label(v.sprite.x, v.sprite.y - len * 0.6 - 6, s.name, s.owner === me ? '#f1e3c2' : '#ffb59e');
+    }
+
+    const selBuilding = this.ctl.selectedBuilding();
+    for (const b of state.buildings) {
+      const s = BUILDINGS[b.kind];
+      const x = b.x * TILE_PX;
+      const y = b.y * TILE_PX;
+      if (selBuilding?.id === b.id) {
+        g.lineStyle(1, 0xffffff, 1);
+        this.brackets(g, x - 1, y - 1, s.w * TILE_PX + 2, s.h * TILE_PX + 2);
+      }
+      if (b.buildLeft > 0) {
+        const total = ticks(s.buildSeconds);
+        this.bar(g, x + s.w * TILE_PX / 2, y - 3, s.w * TILE_PX - 4, 1 - b.buildLeft / total, 0xe3b23c);
+      } else if (b.hp < s.hp) {
+        this.hpBar(g, x + s.w * TILE_PX / 2, y - buildingOverhang(b.kind) - 3, Math.min(30, s.w * TILE_PX), b.hp / s.hp);
       }
     }
 
-    for (const v of state.villages) {
-      const vis = this.villageVisuals.get(v.id);
-      if (!vis) continue;
-      const { x, y, width, height } = vis.sprite;
-      const max = villageMaxHp(v);
-      const isSel = this.selection.villageId === v.id;
-      if (isSel) this.brackets(g, x - width / 2 - 1, y - height / 2 - 1, width + 2, height + 2, color(state.players[v.owner].color));
-      if (isSel || v.hp < max) this.hpBar(g, x, y - height / 2 - 3, 14, v.hp / max, false);
+    // Città: nome, territorio della città selezionata e assedi.
+    const focus = selBuilding ? getCity(state, selBuilding.cityId) : null;
+    const placing = this.ctl.mode.type === 'place' ? getCity(state, this.ctl.mode.cityId) : null;
+    for (const c of state.cities) {
+      const px = (c.cx + 0.5) * TILE_PX;
+      const py = (c.cy + 0.5) * TILE_PX;
+      if (c === focus || c === placing) {
+        g.lineStyle(1, 0xf1e3c2, 0.45);
+        g.strokeCircle(px, py, CITY.radius * TILE_PX);
+      }
+      this.label(px, (c.cy - 1) * TILE_PX - 14, c.name, c.owner === me ? '#ffe7a3' : c.owner === NEUTRAL ? '#d8d2c0' : '#ffb59e');
+      if (c.siege) {
+        const attacker = state.players[c.siege.owner];
+        const def = Math.ceil(c.garrison.soldiers + c.garrison.sailors);
+        this.label(px, (c.cy + 2) * TILE_PX + 12, `Assedio: ${Math.ceil(c.siege.soldiers)} ${attacker?.name ?? ''} contro ${def}`, '#ff8a6a');
+        if (Math.random() < 0.3) {
+          const a = Math.random() * Math.PI * 2;
+          this.puff(px + Math.cos(a) * 26, py + Math.sin(a) * 26, 0xf2efe6, 2, 3);
+        }
+      }
     }
 
     if (this.dragStart && this.dragEnd) {
@@ -483,50 +653,88 @@ export class WorldScene extends Phaser.Scene {
       g.lineStyle(1, 0xffffff, 0.9);
       g.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     }
+
+    for (let i = this.labelIndex; i < this.labels.length; i++) this.labels[i].setVisible(false);
+  }
+
+  private updateGhost(): void {
+    const mode = this.ctl.mode;
+    if (mode.type !== 'place') {
+      this.ghost.setVisible(false);
+      return;
+    }
+    const at = this.placementOrigin(mode.kind);
+    const s = BUILDINGS[mode.kind];
+    const ok = !buildProblem(this.state, this.ctl.me, mode.cityId, mode.kind, at.x, at.y);
+    this.ghost
+      .setTexture(this.kindTexture(mode.kind, this.ctl.me))
+      .setOrigin(0, 1)
+      .setPosition(at.x * TILE_PX, (at.y + s.h) * TILE_PX)
+      .setAlpha(0.75)
+      .setTint(ok ? 0xa8ffa8 : 0xff8080)
+      .setVisible(true);
+    const g = this.overlay;
+    g.lineStyle(1, ok ? 0x7dff7d : 0xff5a4a, 1);
+    g.strokeRect(at.x * TILE_PX, at.y * TILE_PX, s.w * TILE_PX, s.h * TILE_PX);
   }
 
   private orderLine(g: Phaser.GameObjects.Graphics, s: Ship, x: number, y: number): void {
-    const state = this.session.state;
+    const state = this.state;
     let to: Point | null = null;
     let c = 0xffffff;
-    if (s.order.type === 'attackShip') {
-      const order = s.order;
-      const t = state.ships.find((o) => o.id === order.targetId);
+    const o = s.order;
+    if (o.type === 'attackShip') {
+      const t = state.ships.find((x) => x.id === o.targetId);
       if (t) to = { x: t.x * TILE_PX, y: t.y * TILE_PX };
-      c = order.capture ? 0xffcd75 : 0xff4040;
-    } else if (s.order.type === 'attackVillage') {
-      const order = s.order;
-      const v = state.villages.find((o) => o.id === order.targetId);
-      if (v) to = { x: (v.x + 0.5) * TILE_PX, y: (v.y + 0.5) * TILE_PX };
-      c = 0xff4040;
+      c = o.board ? 0xffcd75 : 0xff5a4a;
+    } else if (o.type === 'attackBuilding') {
+      const b = state.buildings.find((x) => x.id === o.targetId);
+      if (b) to = { x: (b.x + BUILDINGS[b.kind].w / 2) * TILE_PX, y: (b.y + BUILDINGS[b.kind].h / 2) * TILE_PX };
+      c = 0xff5a4a;
+    } else if (o.type === 'land') {
+      const city = getCity(state, o.cityId);
+      if (city) to = { x: (city.dock.x + 0.5) * TILE_PX, y: (city.dock.y + 0.5) * TILE_PX };
+      c = 0xffcd75;
     } else if (s.path.length) {
       const end = s.path[s.path.length - 1];
       to = { x: end.x * TILE_PX, y: end.y * TILE_PX };
-      c = s.order.type === 'found' ? 0xffcd75 : 0xffffff;
+      c = o.type === 'found' ? 0xffcd75 : 0xffffff;
     }
     if (!to) return;
-    g.lineStyle(1, c, 0.35);
+    g.lineStyle(1, c, 0.4);
     g.lineBetween(x, y, to.x, to.y);
+    g.fillStyle(c, 0.8);
+    g.fillCircle(to.x, to.y, 1.5);
   }
 
-  private brackets(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, c: number): void {
-    const l = 3;
-    g.fillStyle(c, 1);
-    for (const [bx, by, sx, sy] of [[x, y, 1, 1], [x + w - 1, y, -1, 1], [x, y + h - 1, 1, -1], [x + w - 1, y + h - 1, -1, -1]]) {
-      g.fillRect(Math.round(sx > 0 ? bx : bx - l + 1), Math.round(by), l, 1);
-      g.fillRect(Math.round(bx), Math.round(sy > 0 ? by : by - l + 1), 1, l);
-    }
+  private brackets(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number): void {
+    const l = 4;
+    g.lineBetween(x, y, x + l, y);
+    g.lineBetween(x, y, x, y + l);
+    g.lineBetween(x + w, y, x + w - l, y);
+    g.lineBetween(x + w, y, x + w, y + l);
+    g.lineBetween(x, y + h, x + l, y + h);
+    g.lineBetween(x, y + h, x, y + h - l);
+    g.lineBetween(x + w, y + h, x + w - l, y + h);
+    g.lineBetween(x + w, y + h, x + w, y + h - l);
   }
 
-  private hpBar(g: Phaser.GameObjects.Graphics, cx: number, y: number, w: number, ratio: number, boardable: boolean): void {
+  private bar(g: Phaser.GameObjects.Graphics, cx: number, y: number, w: number, ratio: number, color: number): void {
     const x = Math.round(cx - w / 2);
-    const yy = Math.round(y);
-    g.fillStyle(0x1a1c2c, 1);
-    g.fillRect(x - 1, yy - 1, w + 2, 4);
-    g.fillStyle(0x333c57, 1);
-    g.fillRect(x, yy, w, 2);
-    const fill = ratio > 0.6 ? 0x38b764 : ratio > 0.3 ? 0xffcd75 : 0xb13e53;
-    g.fillStyle(boardable ? 0xffcd75 : fill, 1);
-    g.fillRect(x, yy, Math.max(0, Math.round(w * Math.max(0, ratio))), 2);
+    g.fillStyle(0x1b1712, 1).fillRect(x - 1, Math.round(y) - 1, w + 2, 4);
+    g.fillStyle(0x3a3328, 1).fillRect(x, Math.round(y), w, 2);
+    g.fillStyle(color, 1).fillRect(x, Math.round(y), Math.max(0, Math.round(w * Math.min(1, ratio))), 2);
+  }
+
+  private hpBar(g: Phaser.GameObjects.Graphics, cx: number, y: number, w: number, ratio: number): void {
+    this.bar(g, cx, y, w, ratio, ratio > 0.6 ? 0x5bc04a : ratio > 0.3 ? 0xe3b23c : 0xd9473a);
   }
 }
+
+/** Colore distintivo di un giocatore (bandiera, o un colore leggibile per i pirati). */
+export function FACTION_COLOR(state: GameState, owner: PlayerId): string {
+  const f = state.players[owner]?.faction;
+  if (!f) return '#d8d2c0';
+  return f === 'pirati' ? '#e8e8e8' : FACTIONS[f].colors.flag === '#c8a227' ? '#e3b23c' : FACTIONS[f].colors.flag;
+}
+

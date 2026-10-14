@@ -1,34 +1,54 @@
 import type { Command, PlayerCommand } from './commands';
-import { isLand, isSea, nearestSea, type Point } from './map';
+import { sanitizeName } from './factions';
+import { Tile, nearestSea, tileAt, type Point } from './map';
 import { findPath } from './pathfinding';
 import {
   BUILDINGS,
+  CITY,
   COMBAT,
+  FOOD,
+  FOREST_BONUS,
+  RECRUIT,
   SHIPS,
   TICK_RATE,
-  VILLAGE,
-  buildingCost,
+  UNITS,
   ticks,
+  type BuildingKind,
   type Cost,
-  type ShipKind,
+  type ShipClass,
+  type UnitKind,
 } from './rules';
 import {
   NEUTRAL,
-  addVillage,
+  addBuilding,
+  addCity,
+  buildingCenter,
+  buildingOwner,
+  cityBuildings,
+  cityTier,
+  crewEfficiency,
   distance,
-  foundingSite,
+  foundingProblem,
+  getBuilding,
+  getCity,
   getShip,
-  getVillage,
+  housing,
+  isComplete,
   isEnemy,
+  modifiers,
+  placementProblem,
+  recruitable,
+  shipMaxHp,
+  shipMen,
+  shipyardDock,
   spawnShip,
-  villageCenter,
-  villageMaxHp,
+  suggestShipName,
+  type Building,
+  type City,
   type GameState,
   type Player,
   type PlayerId,
-  type ProductionItem,
   type Ship,
-  type Village,
 } from './state';
 
 /**
@@ -39,26 +59,109 @@ import {
 export function step(state: GameState, commands: readonly PlayerCommand[]): void {
   if (state.winner !== null) return;
   state.events = [];
+  const ctx: TickContext = { sunkBy: new Map(), founded: new Set() };
 
   const ordered = [...commands].sort((a, b) => a.player - b.player);
   for (const c of ordered) applyCommand(state, c.player, c.command);
 
-  updateVillages(state);
-  for (const ship of state.ships) updateShip(state, ship);
-  for (const village of state.villages) villageFire(state, village);
-  removeSunkShips(state);
+  for (const p of state.players) if (p.id !== NEUTRAL && p.alive) updateEconomy(state, p);
+  for (const city of state.cities) updateCity(state, city);
+  for (const b of state.buildings) updateBuilding(state, b, ctx);
+  for (const ship of state.ships) updateShip(state, ship, ctx);
+  removeSunkShips(state, ctx);
+  removeDestroyedBuildings(state);
   checkElimination(state);
 
   state.tick++;
 }
 
-// ---------------------------------------------------------------- comandi
+interface TickContext {
+  /** Chi ha affondato ogni nave in questo tick. */
+  sunkBy: Map<number, PlayerId>;
+  /** Navi coloniali sbarcate per fondare una città (non affondate). */
+  founded: Set<number>;
+}
+
+// ================================================================ costi e rendite
+
+export function shipCost(state: GameState, owner: PlayerId, cls: ShipClass): Cost {
+  const base = SHIPS[cls].cost;
+  const k = cls === 'sloop' || cls === 'brigantino' ? modifiers(state, owner).smallShipCost : 1;
+  return { gold: Math.round(base.gold * k), wood: Math.round(base.wood * k) };
+}
+
+export function recruitCost(unit: UnitKind, count: number): Cost {
+  return { gold: UNITS[unit].gold * count, wood: 0 };
+}
+
+function canAfford(p: Player, cost: Cost): boolean {
+  return p.gold >= cost.gold && p.wood >= cost.wood;
+}
+
+function pay(p: Player, cost: Cost): void {
+  p.gold -= cost.gold;
+  p.wood -= cost.wood;
+}
+
+function nearForest(state: GameState, b: Building): boolean {
+  for (let y = b.y - 3; y <= b.y + 4; y++) {
+    for (let x = b.x - 3; x <= b.x + 4; x++) {
+      if (tileAt(state.map, x, y) === Tile.Forest) return true;
+    }
+  }
+  return false;
+}
+
+export interface Income {
+  gold: number;
+  wood: number;
+  food: number;
+}
+
+/** Produzione al secondo di una città (senza i consumi). */
+export function cityProduction(state: GameState, city: City): Income {
+  const out: Income = { gold: 0, wood: 0, food: 0 };
+  if (city.owner === NEUTRAL) return out;
+  for (const b of cityBuildings(state, city.id)) {
+    if (!isComplete(b) || b.hp <= 0) continue;
+    const s = BUILDINGS[b.kind];
+    out.gold += s.gold;
+    out.food += s.food;
+    out.wood += s.wood * (b.kind === 'segheria' && nearForest(state, b) ? FOREST_BONUS : 1);
+  }
+  out.gold += city.population * CITY.taxPerCitizen;
+  out.gold *= modifiers(state, city.owner).goldIncome;
+  return out;
+}
+
+/** Bilancio al secondo di un giocatore: produzione meno consumi di cibo. */
+export function playerBalance(state: GameState, player: PlayerId): Income & { foodUse: number } {
+  const total: Income = { gold: 0, wood: 0, food: 0 };
+  let foodUse = 0;
+  for (const c of state.cities) {
+    if (c.owner !== player) continue;
+    const p = cityProduction(state, c);
+    total.gold += p.gold;
+    total.wood += p.wood;
+    total.food += p.food;
+    foodUse += c.population * FOOD.perCitizen + (c.garrison.sailors + c.garrison.soldiers) * FOOD.perMan;
+  }
+  for (const s of state.ships) if (s.owner === player) foodUse += (shipMen(s) + s.colonists) * FOOD.perMan;
+  return { ...total, food: total.food - foodUse, foodUse };
+}
+
+// ================================================================ comandi
 
 function ownedShips(state: GameState, player: PlayerId, ids: readonly number[]): Ship[] {
-  const unique = [...new Set(ids)];
-  return unique
+  return [...new Set(ids)]
     .map((id) => getShip(state, id))
     .filter((s): s is Ship => s !== undefined && s.owner === player);
+}
+
+function ownedBuilding(state: GameState, player: PlayerId, id: number, kind: BuildingKind): Building | null {
+  const b = getBuilding(state, id);
+  if (!b || b.kind !== kind || !isComplete(b) || buildingOwner(state, b) !== player) return null;
+  return b;
 }
 
 /** Posizioni di formazione attorno al punto di arrivo, in ordine deterministico. */
@@ -69,20 +172,65 @@ const FORMATION: readonly Point[] = [
   { x: 2, y: -1 }, { x: -2, y: -1 }, { x: 1, y: 2 }, { x: -1, y: 2 }, { x: 1, y: -2 },
 ];
 
+export const QUEUE_MAX = 5;
+
+/** Motivo per cui non si può varare una nave, o null. */
+export function shipProblem(state: GameState, player: PlayerId, buildingId: number, cls: ShipClass): string | null {
+  const yard = ownedBuilding(state, player, buildingId, 'cantiere');
+  if (!yard) return 'Serve un cantiere navale completato';
+  const city = getCity(state, yard.cityId)!;
+  const s = SHIPS[cls];
+  if (cityTier(city) < s.tier) return s.tier === 2 ? 'Serve un paese (35 abitanti)' : 'Serve una città (80 abitanti)';
+  if (yard.queue.length >= QUEUE_MAX) return 'Coda piena';
+  if (!canAfford(state.players[player], shipCost(state, player, cls))) return 'Risorse insufficienti';
+  if (city.garrison.sailors < s.crew) return `Servono ${s.crew} marinai in città`;
+  if (s.colonists > 0 && city.population - s.colonists < RECRUIT.minPopulation) return `Servono ${s.colonists + RECRUIT.minPopulation} abitanti`;
+  return null;
+}
+
+/** Motivo per cui non si può arruolare, o null. */
+export function recruitProblem(state: GameState, player: PlayerId, buildingId: number, unit: UnitKind, count: number): string | null {
+  const barracks = ownedBuilding(state, player, buildingId, 'caserma');
+  if (!barracks) return 'Serve una caserma completata';
+  const city = getCity(state, barracks.cityId)!;
+  if (!Number.isInteger(count) || count < 1) return 'Numero non valido';
+  if (count > recruitable(city)) return `Puoi arruolare al massimo ${recruitable(city)} uomini: fai crescere la città`;
+  if (barracks.queue.length >= QUEUE_MAX) return 'Coda piena';
+  if (!canAfford(state.players[player], recruitCost(unit, count))) return 'Oro insufficiente';
+  return null;
+}
+
+export function buildProblem(state: GameState, player: PlayerId, cityId: number, kind: BuildingKind, x: number, y: number): string | null {
+  const problem = placementProblem(state, player, cityId, kind, x, y);
+  if (problem) return problem;
+  if (!canAfford(state.players[player], BUILDINGS[kind].cost)) return 'Risorse insufficienti';
+  return null;
+}
+
+/** Il punto di attracco più vicino della città a cui la nave può trasferire uomini. */
+export function dockedCity(state: GameState, ship: Ship): City | null {
+  for (const c of state.cities) {
+    if (c.owner !== ship.owner) continue;
+    if (distance(ship, { x: c.dock.x + 0.5, y: c.dock.y + 0.5 }) <= COMBAT.dockRange) return c;
+    for (const b of cityBuildings(state, c.id)) {
+      if (b.kind === 'cantiere' && distance(ship, shipyardDock(state, b)) <= COMBAT.dockRange) return c;
+    }
+  }
+  return null;
+}
+
 function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
   if (!state.players[player]?.alive) return;
   switch (cmd.type) {
-    case 'move': {
+    case 'move':
       ownedShips(state, player, cmd.shipIds).forEach((ship, i) => {
         const off = FORMATION[i % FORMATION.length];
         const ring = Math.floor(i / FORMATION.length) + 1;
-        const target = { x: cmd.x + off.x * 1.5 * ring, y: cmd.y + off.y * 1.5 * ring };
-        const path = findPath(state.map, ship, target);
+        const path = findPath(state.map, ship, { x: cmd.x + off.x * 1.6 * ring, y: cmd.y + off.y * 1.6 * ring });
         ship.path = path ?? [];
         ship.order = path ? { type: 'move' } : { type: 'idle' };
       });
       break;
-    }
     case 'stop':
       for (const ship of ownedShips(state, player, cmd.shipIds)) {
         ship.path = [];
@@ -93,155 +241,275 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
       const target = getShip(state, cmd.targetId);
       if (!target || !isEnemy(player, target.owner)) return;
       for (const ship of ownedShips(state, player, cmd.shipIds)) {
-        if (SHIPS[ship.kind].damage <= 0) continue;
-        ship.order = { type: 'attackShip', targetId: target.id, capture: cmd.capture };
+        if (!cmd.board && SHIPS[ship.cls].damage <= 0) continue;
+        ship.order = { type: 'attackShip', targetId: target.id, board: cmd.board };
         ship.repath = 0;
       }
       break;
     }
-    case 'attackVillage': {
-      const target = getVillage(state, cmd.targetId);
-      if (!target || target.owner === player) return;
+    case 'attackBuilding': {
+      const target = getBuilding(state, cmd.targetId);
+      if (!target || buildingOwner(state, target) === player) return;
       for (const ship of ownedShips(state, player, cmd.shipIds)) {
-        if (SHIPS[ship.kind].damage <= 0) continue;
-        ship.order = { type: 'attackVillage', targetId: target.id };
+        if (SHIPS[ship.cls].damage <= 0) continue;
+        ship.order = { type: 'attackBuilding', targetId: target.id };
+        ship.repath = 0;
+      }
+      break;
+    }
+    case 'land': {
+      const city = getCity(state, cmd.cityId);
+      if (!city || city.owner === player) return;
+      for (const ship of ownedShips(state, player, cmd.shipIds)) {
+        if (ship.soldiers < 1) continue;
+        ship.order = { type: 'land', cityId: city.id };
         ship.repath = 0;
       }
       break;
     }
     case 'found': {
       const [ship] = ownedShips(state, player, [cmd.shipId]);
-      if (!ship || ship.kind !== 'colony') return;
-      const site = foundingSite(state, cmd.x, cmd.y);
-      if (!site) return;
-      const path = findPath(state.map, ship, { x: site.dock.x + 0.5, y: site.dock.y + 0.5 });
+      if (!ship || ship.colonists <= 0 || foundingProblem(state, cmd.x, cmd.y)) return;
+      const dock = nearestSea(state.map, Math.floor(cmd.x), Math.floor(cmd.y), 4);
+      const path = dock && findPath(state.map, ship, { x: dock.x + 0.5, y: dock.y + 0.5 });
       if (!path) return;
       ship.path = path;
-      ship.order = { type: 'found', x: site.x, y: site.y };
+      ship.order = { type: 'found', x: Math.floor(cmd.x), y: Math.floor(cmd.y) };
       break;
     }
-    case 'build':
-      enqueue(state, player, cmd.villageId, cmd.item);
+    case 'placeBuilding': {
+      if (buildProblem(state, player, cmd.cityId, cmd.kind, cmd.x, cmd.y)) return;
+      pay(state.players[player], BUILDINGS[cmd.kind].cost);
+      addBuilding(state, cmd.cityId, cmd.kind, cmd.x, cmd.y, false);
       break;
-  }
-}
-
-function canAfford(p: Player, cost: Cost): boolean {
-  return p.gold >= cost.gold && p.wood >= cost.wood;
-}
-
-/** Costo e validità di un elemento di produzione, o null se non costruibile ora. */
-export function productionCost(village: Village, item: ProductionItem): Cost | null {
-  if (village.queue.length >= VILLAGE.queueMax) return null;
-  if (item.type === 'ship') {
-    const stats = SHIPS[item.ship];
-    return village.buildings.cantiere >= stats.shipyardLevel ? stats.cost : null;
-  }
-  const queued = village.queue.filter(
-    (q) => q.item.type === 'building' && q.item.building === item.building,
-  ).length;
-  const level = village.buildings[item.building] + queued;
-  return level < BUILDINGS[item.building].maxLevel ? buildingCost(item.building, level) : null;
-}
-
-export function canBuild(state: GameState, player: PlayerId, villageId: number, item: ProductionItem): boolean {
-  const village = getVillage(state, villageId);
-  if (!village || village.owner !== player) return false;
-  const cost = productionCost(village, item);
-  return cost !== null && canAfford(state.players[player], cost);
-}
-
-function enqueue(state: GameState, player: PlayerId, villageId: number, item: ProductionItem): void {
-  const village = getVillage(state, villageId);
-  if (!village || village.owner !== player) return;
-  const cost = productionCost(village, item);
-  const p = state.players[player];
-  if (!cost || !canAfford(p, cost)) return;
-  p.gold -= cost.gold;
-  p.wood -= cost.wood;
-  const seconds = item.type === 'ship' ? SHIPS[item.ship].buildSeconds : BUILDINGS[item.building].buildSeconds;
-  village.queue.push({ item, ticksLeft: ticks(seconds), totalTicks: ticks(seconds) });
-}
-
-// ---------------------------------------------------------------- villaggi
-
-export function villageIncome(v: Village): Cost {
-  return {
-    gold: VILLAGE.goldPerSecond + v.buildings.mercato * VILLAGE.goldPerMercato,
-    wood: VILLAGE.woodPerSecond + v.buildings.segheria * VILLAGE.woodPerSegheria,
-  };
-}
-
-function updateVillages(state: GameState): void {
-  for (const v of state.villages) {
-    if (v.owner !== NEUTRAL) {
-      const p = state.players[v.owner];
-      const income = villageIncome(v);
-      p.gold += income.gold / TICK_RATE;
-      p.wood += income.wood / TICK_RATE;
     }
-
-    const current = v.queue[0];
-    if (current && --current.ticksLeft <= 0) {
-      v.queue.shift();
-      completeProduction(state, v, current.item);
+    case 'buildShip': {
+      if (shipProblem(state, player, cmd.buildingId, cmd.cls)) return;
+      const yard = getBuilding(state, cmd.buildingId)!;
+      const city = getCity(state, yard.cityId)!;
+      const s = SHIPS[cmd.cls];
+      pay(state.players[player], shipCost(state, player, cmd.cls));
+      city.garrison.sailors -= s.crew;
+      city.population -= s.colonists;
+      const name = sanitizeName(cmd.name) ?? suggestShipName(state, player);
+      if (name === suggestShipName(state, player)) state.players[player].shipNameIndex++;
+      yard.queue.push({ type: 'ship', cls: cmd.cls, name, ticksLeft: ticks(s.buildSeconds), totalTicks: ticks(s.buildSeconds) });
+      break;
     }
-
-    const max = villageMaxHp(v);
-    if (v.hp < max && state.tick - v.lastDamagedTick > ticks(VILLAGE.regenDelaySeconds)) {
-      v.hp = Math.min(max, v.hp + VILLAGE.regenPerSecond / TICK_RATE);
+    case 'recruit': {
+      if (recruitProblem(state, player, cmd.buildingId, cmd.unit, cmd.count)) return;
+      const barracks = getBuilding(state, cmd.buildingId)!;
+      const city = getCity(state, barracks.cityId)!;
+      pay(state.players[player], recruitCost(cmd.unit, cmd.count));
+      city.population -= cmd.count;
+      const t = Math.max(1, ticks(UNITS[cmd.unit].trainSeconds * cmd.count));
+      barracks.queue.push({ type: 'recruit', unit: cmd.unit, count: cmd.count, ticksLeft: t, totalTicks: t });
+      break;
     }
-    if (v.cooldown > 0) v.cooldown--;
+    case 'transfer': {
+      const [ship] = ownedShips(state, player, [cmd.shipId]);
+      const city = getCity(state, cmd.cityId);
+      if (!ship || !city || city.owner !== player || dockedCity(state, ship)?.id !== city.id) return;
+      transfer(ship, city, 'sailors', Math.trunc(cmd.sailors));
+      transfer(ship, city, 'soldiers', Math.trunc(cmd.soldiers));
+      break;
+    }
+    case 'renameShip': {
+      const [ship] = ownedShips(state, player, [cmd.shipId]);
+      const name = sanitizeName(cmd.name);
+      if (ship && name) ship.name = name;
+      break;
+    }
   }
 }
 
-function completeProduction(state: GameState, v: Village, item: ProductionItem): void {
-  if (item.type === 'ship') {
-    const ship = spawnShip(state, v.owner, item.ship, v.dock.x + 0.5, v.dock.y + 0.5);
-    state.events.push({ type: 'shipBuilt', shipId: ship.id, owner: v.owner, kind: item.ship });
-  } else {
-    v.buildings[item.building]++;
-    if (item.building === 'forte') v.hp += VILLAGE.hpPerForte;
-    state.events.push({
-      type: 'buildingDone',
-      villageId: v.id,
-      owner: v.owner,
-      building: item.building,
-      level: v.buildings[item.building],
-    });
+/** Sposta uomini: delta > 0 imbarca dalla città, delta < 0 sbarca in città. */
+function transfer(ship: Ship, city: City, unit: UnitKind, delta: number): void {
+  if (delta > 0) {
+    const room = SHIPS[ship.cls].capacity - shipMen(ship);
+    const n = Math.min(delta, Math.floor(city.garrison[unit]), room);
+    if (n <= 0) return;
+    city.garrison[unit] -= n;
+    ship[unit] += n;
+  } else if (delta < 0) {
+    const n = Math.min(-delta, Math.floor(ship[unit]));
+    if (n <= 0) return;
+    ship[unit] -= n;
+    city.garrison[unit] += n;
   }
 }
 
-function villageFire(state: GameState, v: Village): void {
-  if (v.cooldown > 0 || v.hp <= 0) return;
-  const center = villageCenter(v);
+// ================================================================ economia e città
+
+function updateEconomy(state: GameState, p: Player): void {
+  const balance = playerBalance(state, p.id);
+  p.gold += balance.gold / TICK_RATE;
+  p.wood += balance.wood / TICK_RATE;
+  p.food += balance.food / TICK_RATE;
+  if (p.food > 0) {
+    p.starvingTicks = 0;
+    return;
+  }
+  p.food = 0;
+  if (p.starvingTicks === 0) state.events.push({ type: 'famine', owner: p.id });
+  p.starvingTicks++;
+  for (const c of state.cities) {
+    if (c.owner === p.id) c.population = Math.max(1, c.population - CITY.starvationLoss / TICK_RATE);
+  }
+  if (p.starvingTicks % ticks(FOOD.desertionSeconds) === 0) {
+    const desert = (crew: { sailors: number; soldiers: number }) => {
+      crew.sailors = Math.max(0, crew.sailors - Math.max(1, Math.round(crew.sailors * FOOD.desertionShare)));
+      crew.soldiers = Math.max(0, crew.soldiers - Math.max(1, Math.round(crew.soldiers * FOOD.desertionShare)));
+    };
+    for (const c of state.cities) if (c.owner === p.id) desert(c.garrison);
+    for (const s of state.ships) if (s.owner === p.id) desert(s);
+  }
+}
+
+function updateCity(state: GameState, city: City): void {
+  if (city.owner !== NEUTRAL && !city.siege) {
+    const cap = housing(state, city.id);
+    const fed = state.players[city.owner].food > 0;
+    if (fed && city.population < cap) {
+      const growth = (CITY.growthBase + city.population * CITY.growthPerCitizen) / TICK_RATE;
+      city.population = Math.min(cap, city.population + growth);
+    } else if (city.population > cap + 0.5) {
+      city.population -= CITY.starvationLoss / TICK_RATE;
+    }
+  }
+  if (city.siege) resolveAssault(state, city);
+}
+
+function towersAlive(state: GameState, city: City): number {
+  return cityBuildings(state, city.id).filter((b) => b.kind === 'torre' && isComplete(b) && b.hp > 0).length;
+}
+
+/** Forza difensiva della milizia cittadina e delle torri (non subisce perdite). */
+export function militiaStrength(state: GameState, city: City): number {
+  return city.population * CITY.militiaPerCitizen + towersAlive(state, city) * CITY.towerGarrisonBonus;
+}
+
+export function garrisonStrength(state: GameState, city: City): number {
+  const power = modifiers(state, city.owner).soldierPower;
+  return city.garrison.soldiers * UNITS.soldiers.power * power + city.garrison.sailors * UNITS.sailors.power;
+}
+
+function resolveAssault(state: GameState, city: City): void {
+  const siege = city.siege!;
+  const attPower = UNITS.soldiers.power * modifiers(state, siege.owner).soldierPower;
+  const att = siege.soldiers * attPower;
+  const garrison = garrisonStrength(state, city);
+  const militia = militiaStrength(state, city);
+
+  siege.soldiers -= ((garrison + militia) * COMBAT.assaultRate) / attPower;
+
+  let loss = att * COMBAT.assaultRate;
+  const defPower = UNITS.soldiers.power * modifiers(state, city.owner).soldierPower;
+  const soldierLoss = Math.min(city.garrison.soldiers, loss / defPower);
+  city.garrison.soldiers -= soldierLoss;
+  loss -= soldierLoss * defPower;
+  city.garrison.sailors = Math.max(0, city.garrison.sailors - loss / UNITS.sailors.power);
+
+  const garrisonLeft = city.garrison.soldiers + city.garrison.sailors;
+  if (siege.soldiers < 0.5) {
+    city.siege = null;
+    state.events.push({ type: 'assaultFailed', cityId: city.id, attacker: siege.owner, defender: city.owner });
+  } else if (garrisonLeft < 0.5 && siege.soldiers * attPower > militia) {
+    captureCity(state, city, siege.owner, siege.soldiers);
+  }
+}
+
+function captureCity(state: GameState, city: City, newOwner: PlayerId, soldiers: number): void {
+  const from = city.owner;
+  city.owner = newOwner;
+  city.garrison = { sailors: 0, soldiers };
+  city.siege = null;
+  city.population = Math.max(1, city.population * (1 - CITY.capturePopulationLoss));
+  for (const b of cityBuildings(state, city.id)) {
+    b.queue = [];
+    b.lastDamagedTick = state.tick;
+    if (b.kind === 'municipio') b.hp = Math.max(b.hp, BUILDINGS.municipio.hp * 0.3);
+  }
+  state.events.push({ type: 'cityCaptured', cityId: city.id, from, to: newOwner });
+}
+
+// ================================================================ edifici
+
+function updateBuilding(state: GameState, b: Building, ctx: TickContext): void {
+  const city = getCity(state, b.cityId);
+  if (!city) return;
+  const owner = city.owner;
+
+  if (b.buildLeft > 0) {
+    if (--b.buildLeft === 0) state.events.push({ type: 'buildingDone', buildingId: b.id, owner, kind: b.kind });
+    return;
+  }
+
+  const max = BUILDINGS[b.kind].hp;
+  if (b.hp < max && !city.siege && state.tick - b.lastDamagedTick > ticks(CITY.regenDelaySeconds)) {
+    b.hp = Math.min(max, b.hp + CITY.regenPerSecond / TICK_RATE);
+  }
+
+  const current = b.queue[0];
+  if (current && --current.ticksLeft <= 0) {
+    b.queue.shift();
+    if (current.type === 'ship') {
+      const dock = shipyardDock(state, b);
+      const ship = spawnShip(state, owner, current.cls, dock.x, dock.y, current.name, { sailors: SHIPS[current.cls].crew });
+      ship.colonists = SHIPS[current.cls].colonists;
+      state.events.push({ type: 'shipLaunched', shipId: ship.id, owner, cityId: city.id });
+    } else {
+      city.garrison[current.unit] += current.count;
+      state.events.push({ type: 'recruited', cityId: city.id, owner, unit: current.unit, count: current.count });
+    }
+  }
+
+  if (b.cooldown > 0) b.cooldown--;
+  const stats = BUILDINGS[b.kind];
+  if (stats.damage > 0 && b.hp > 0 && b.cooldown === 0) buildingFire(state, b, city, ctx);
+}
+
+function hostileToCity(state: GameState, s: Ship, city: City): boolean {
+  if (s.owner === city.owner) return false;
+  if (city.owner !== NEUTRAL) return isEnemy(city.owner, s.owner);
+  // Le città neutrali rispondono solo a chi le attacca.
+  if (city.siege?.owner === s.owner) return true;
+  const o = s.order;
+  if (o.type === 'land') return o.cityId === city.id;
+  if (o.type === 'attackBuilding') return getBuilding(state, o.targetId)?.cityId === city.id;
+  return false;
+}
+
+function buildingFire(state: GameState, b: Building, city: City, ctx: TickContext): void {
+  const stats = BUILDINGS[b.kind];
+  const center = buildingCenter(b);
   let target: Ship | null = null;
   let bestD = Infinity;
   for (const s of state.ships) {
-    if (s.hp <= 0 || s.owner === v.owner) continue;
-    // I villaggi neutrali rispondono solo a chi li attacca.
-    const hostile =
-      v.owner === NEUTRAL
-        ? s.order.type === 'attackVillage' && s.order.targetId === v.id
-        : isEnemy(v.owner, s.owner);
-    if (!hostile) continue;
+    if (s.hp <= 0 || !hostileToCity(state, s, city)) continue;
     const d = distance(center, s);
-    if (d <= VILLAGE.range && d < bestD) {
+    if (d <= stats.range && d < bestD) {
       target = s;
       bestD = d;
     }
   }
   if (!target) return;
-  target.hp -= VILLAGE.baseDamage + v.buildings.forte * VILLAGE.damagePerForte;
-  v.cooldown = ticks(VILLAGE.reloadSeconds);
-  state.events.push({ type: 'shot', from: center, to: { x: target.x, y: target.y }, hit: true });
-  if (target.hp <= 0) markSunkBy.set(target.id, v.owner);
+  target.hp -= stats.damage * modifiers(state, city.owner).cannonDamage;
+  b.cooldown = ticks(stats.reloadSeconds);
+  state.events.push({ type: 'shot', from: center, to: { x: target.x, y: target.y } });
+  if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) ctx.sunkBy.set(target.id, city.owner);
 }
 
-// ---------------------------------------------------------------- navi
+function removeDestroyedBuildings(state: GameState): void {
+  state.buildings = state.buildings.filter((b) => {
+    if (b.hp > 0 || b.kind === 'municipio') return true;
+    const c = buildingCenter(b);
+    state.events.push({ type: 'buildingDestroyed', buildingId: b.id, owner: buildingOwner(state, b), kind: b.kind, x: c.x, y: c.y });
+    return false;
+  });
+}
 
-/** Chi ha affondato ogni nave in questo tick (per gli eventi). */
-const markSunkBy = new Map<number, PlayerId>();
+// ================================================================ navi
 
 function chase(state: GameState, ship: Ship, goal: Point): void {
   if (ship.repath > 0 && ship.path.length > 0) {
@@ -252,8 +520,8 @@ function chase(state: GameState, ship: Ship, goal: Point): void {
   ship.repath = ticks(COMBAT.repathSeconds);
 }
 
-function moveAlongPath(ship: Ship): void {
-  let remaining = SHIPS[ship.kind].speed / TICK_RATE;
+function moveAlongPath(state: GameState, ship: Ship): void {
+  let remaining = (SHIPS[ship.cls].speed * modifiers(state, ship.owner).shipSpeed * crewEfficiency(ship)) / TICK_RATE;
   while (remaining > 0 && ship.path.length > 0) {
     const wp = ship.path[0];
     const dx = wp.x - ship.x;
@@ -272,169 +540,209 @@ function moveAlongPath(ship: Ship): void {
   }
 }
 
-function updateShip(state: GameState, ship: Ship): void {
+function idle(ship: Ship): void {
+  ship.order = { type: 'idle' };
+  ship.path = [];
+}
+
+/** Distanza di tiro verso un edificio: conta anche la sua grandezza. */
+function buildingReach(b: Building): number {
+  const s = BUILDINGS[b.kind];
+  return Math.max(s.w, s.h) / 2;
+}
+
+function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {
   if (ship.hp <= 0) return;
-  const stats = SHIPS[ship.kind];
+  const stats = SHIPS[ship.cls];
   const order = ship.order;
 
   switch (order.type) {
     case 'idle':
       break;
     case 'move':
-      if (ship.path.length === 0) ship.order = { type: 'idle' };
+      if (ship.path.length === 0) idle(ship);
       break;
     case 'attackShip': {
       const target = getShip(state, order.targetId);
       if (!target || target.hp <= 0 || !isEnemy(ship.owner, target.owner)) {
-        ship.order = { type: 'idle' };
-        ship.path = [];
+        idle(ship);
         break;
       }
       const d = distance(ship, target);
-      const boardable = order.capture && target.hp <= SHIPS[target.kind].hp * COMBAT.captureHpRatio;
-      if (boardable && d <= COMBAT.boardRange) {
-        captureShip(state, target, ship.owner);
-        ship.order = { type: 'idle' };
-        ship.path = [];
-      } else if (boardable || d > stats.range * 0.85) {
+      if (order.board) {
+        if (d <= COMBAT.boardRange) resolveBoarding(state, ship, target);
+        else chase(state, ship, target);
+      } else if (d > stats.range * 0.85) {
         chase(state, ship, target);
       } else {
         ship.path = [];
       }
       break;
     }
-    case 'attackVillage': {
-      const target = getVillage(state, order.targetId);
-      if (!target || target.owner === ship.owner) {
-        ship.order = { type: 'idle' };
-        ship.path = [];
+    case 'attackBuilding': {
+      const target = getBuilding(state, order.targetId);
+      if (!target || target.hp <= 0 || buildingOwner(state, target) === ship.owner) {
+        idle(ship);
         break;
       }
-      const d = distance(ship, villageCenter(target));
-      if (target.hp <= 0 && d <= VILLAGE.conquerRange) {
-        captureVillage(state, target, ship.owner);
-        ship.order = { type: 'idle' };
-        ship.path = [];
-      } else if (d > (target.hp <= 0 ? VILLAGE.conquerRange : stats.range * 0.85)) {
-        chase(state, ship, { x: target.dock.x + 0.5, y: target.dock.y + 0.5 });
+      const c = buildingCenter(target);
+      if (distance(ship, c) > stats.range * 0.85 + buildingReach(target)) {
+        const goal = nearestSea(state.map, c.x, c.y, 8);
+        if (goal) chase(state, ship, { x: goal.x + 0.5, y: goal.y + 0.5 });
+        else idle(ship);
       } else {
         ship.path = [];
       }
       break;
     }
-    case 'found': {
-      const site = foundingSite(state, order.x, order.y);
-      if (!site) {
-        ship.order = { type: 'idle' };
-        ship.path = [];
+    case 'land': {
+      const city = getCity(state, order.cityId);
+      if (!city || city.owner === ship.owner || ship.soldiers < 1) {
+        idle(ship);
         break;
       }
-      if (distance(ship, { x: site.dock.x + 0.5, y: site.dock.y + 0.5 }) <= 1.5) {
-        const v = addVillage(state, ship.owner, site);
-        v.hp = villageMaxHp(v) * VILLAGE.restartHpRatio;
-        ship.hp = 0; // l'equipaggio scende a terra: la nave diventa il villaggio
-        state.events.push({ type: 'villageFounded', villageId: v.id, owner: v.owner });
-      } else if (ship.path.length === 0) {
-        ship.order = { type: 'idle' };
+      const dock = { x: city.dock.x + 0.5, y: city.dock.y + 0.5 };
+      if (distance(ship, dock) <= COMBAT.dockRange) {
+        if (city.siege && city.siege.owner !== ship.owner) {
+          idle(ship); // un altro esercito sta già assediando
+          break;
+        }
+        const landed = Math.floor(ship.soldiers);
+        city.siege = city.siege ?? { owner: ship.owner, soldiers: 0 };
+        city.siege.soldiers += landed;
+        ship.soldiers -= landed;
+        state.events.push({ type: 'troopsLanded', cityId: city.id, owner: ship.owner, defender: city.owner, soldiers: landed });
+        idle(ship);
+      } else {
+        chase(state, ship, dock);
       }
+      break;
+    }
+    case 'found': {
+      if (foundingProblem(state, order.x, order.y)) {
+        idle(ship);
+        break;
+      }
+      const dock = nearestSea(state.map, order.x, order.y, 4);
+      if (dock && distance(ship, { x: dock.x + 0.5, y: dock.y + 0.5 }) <= 2) {
+        const city = addCity(state, ship.owner, order.x, order.y, ship.colonists, { sailors: ship.sailors, soldiers: ship.soldiers });
+        ctx.founded.add(ship.id);
+        ship.hp = 0;
+        state.events.push({ type: 'cityFounded', cityId: city.id, owner: ship.owner });
+        return;
+      }
+      if (ship.path.length === 0) idle(ship);
       break;
     }
   }
 
-  moveAlongPath(ship);
+  moveAlongPath(state, ship);
   if (ship.cooldown > 0) ship.cooldown--;
-  if (stats.damage > 0 && ship.cooldown === 0) shipFire(state, ship);
+  if (stats.damage > 0 && ship.cooldown === 0) shipFire(state, ship, ctx);
 }
 
-function shipFire(state: GameState, ship: Ship): void {
-  const stats = SHIPS[ship.kind];
+function shipFire(state: GameState, ship: Ship, ctx: TickContext): void {
+  const stats = SHIPS[ship.cls];
   const order = ship.order;
 
-  if (order.type === 'attackShip') {
+  if (order.type === 'attackShip' && !order.board) {
     const t = getShip(state, order.targetId);
-    const holdFire = order.capture && t && t.hp <= SHIPS[t.kind].hp * COMBAT.captureHpRatio;
-    if (t && !holdFire && t.hp > 0 && distance(ship, t) <= stats.range) {
-      fireAtShip(state, ship, t);
-      return;
+    if (t && t.hp > 0 && distance(ship, t) <= stats.range) return fireAt(state, ship, t, ctx);
+  }
+  if (order.type === 'attackBuilding') {
+    const b = getBuilding(state, order.targetId);
+    if (b && b.hp > 0) {
+      const c = buildingCenter(b);
+      if (distance(ship, c) <= stats.range + buildingReach(b)) {
+        b.hp = Math.max(0, b.hp - damageOf(state, ship));
+        b.lastDamagedTick = state.tick;
+        ship.cooldown = reloadTicks(ship);
+        state.events.push({ type: 'shot', from: { x: ship.x, y: ship.y }, to: c });
+        return;
+      }
     }
   }
-  if (order.type === 'attackVillage') {
-    const v = getVillage(state, order.targetId);
-    if (v && v.hp > 0 && distance(ship, villageCenter(v)) <= stats.range) {
-      const center = villageCenter(v);
-      v.hp = Math.max(0, v.hp - stats.damage);
-      v.lastDamagedTick = state.tick;
-      ship.cooldown = ticks(stats.reloadSeconds);
-      state.events.push({ type: 'shot', from: { x: ship.x, y: ship.y }, to: center, hit: true });
-      return;
-    }
-  }
-
-  // Fuoco automatico sulla nave nemica più vicina.
+  // Durante l'abbordaggio non si spara al bersaglio, ma ci si difende dagli altri.
+  const avoid = order.type === 'attackShip' && order.board ? order.targetId : -1;
   let target: Ship | null = null;
   let bestD = Infinity;
   for (const s of state.ships) {
-    if (s.hp <= 0 || !isEnemy(ship.owner, s.owner)) continue;
+    if (s.hp <= 0 || s.id === avoid || !isEnemy(ship.owner, s.owner)) continue;
     const d = distance(ship, s);
     if (d <= stats.range && d < bestD) {
       target = s;
       bestD = d;
     }
   }
-  if (target) fireAtShip(state, ship, target);
+  if (target) fireAt(state, ship, target, ctx);
 }
 
-function fireAtShip(state: GameState, ship: Ship, target: Ship): void {
-  const stats = SHIPS[ship.kind];
-  target.hp -= stats.damage;
-  ship.cooldown = ticks(stats.reloadSeconds);
-  state.events.push({ type: 'shot', from: { x: ship.x, y: ship.y }, to: { x: target.x, y: target.y }, hit: true });
-  if (target.hp <= 0) markSunkBy.set(target.id, ship.owner);
+function damageOf(state: GameState, ship: Ship): number {
+  return SHIPS[ship.cls].damage * modifiers(state, ship.owner).cannonDamage;
 }
 
-function captureShip(state: GameState, target: Ship, newOwner: PlayerId): void {
-  const from = target.owner;
-  target.owner = newOwner;
-  target.order = { type: 'idle' };
-  target.path = [];
-  state.events.push({ type: 'shipCaptured', shipId: target.id, from, to: newOwner });
+function reloadTicks(ship: Ship): number {
+  return Math.max(1, Math.round(ticks(SHIPS[ship.cls].reloadSeconds) / crewEfficiency(ship)));
 }
 
-function captureVillage(state: GameState, v: Village, newOwner: PlayerId): void {
-  const from = v.owner;
-  v.owner = newOwner;
-  v.hp = villageMaxHp(v) * VILLAGE.restartHpRatio;
-  v.queue = []; // la produzione in corso va persa nel saccheggio
-  v.lastDamagedTick = state.tick;
-  state.events.push({ type: 'villageCaptured', villageId: v.id, from, to: newOwner });
+function fireAt(state: GameState, ship: Ship, target: Ship, ctx: TickContext): void {
+  target.hp -= damageOf(state, ship);
+  ship.cooldown = reloadTicks(ship);
+  state.events.push({ type: 'shot', from: { x: ship.x, y: ship.y }, to: { x: target.x, y: target.y } });
+  if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) ctx.sunkBy.set(target.id, ship.owner);
 }
 
-function removeSunkShips(state: GameState): void {
+/** Forza di un equipaggio nell'arrembaggio. */
+export function boardingStrength(state: GameState, s: Ship): number {
+  const m = modifiers(state, s.owner);
+  return (s.soldiers * UNITS.soldiers.power * m.soldierPower + s.sailors * UNITS.sailors.power) * m.boarding;
+}
+
+function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
+  const att = boardingStrength(state, ship);
+  // Un equipaggio con lo scafo a pezzi si difende peggio.
+  const def = boardingStrength(state, target) * (0.5 + 0.5 * (target.hp / shipMaxHp(state, target)));
+  idle(ship);
+  if (att <= 0) return;
+  if (att > def) {
+    const survive = 1 - (def / att) * 0.6;
+    ship.sailors = Math.floor(ship.sailors * survive);
+    ship.soldiers = Math.floor(ship.soldiers * survive);
+    const prizeCrew = Math.min(SHIPS[target.cls].crew, Math.floor(ship.sailors / 2));
+    const from = target.owner;
+    target.owner = ship.owner;
+    target.sailors = prizeCrew;
+    target.soldiers = 0;
+    target.colonists = 0;
+    ship.sailors -= prizeCrew;
+    idle(target);
+    state.events.push({ type: 'shipCaptured', shipId: target.id, name: target.name, from, to: ship.owner });
+  } else {
+    const survive = 1 - Math.min(0.9, (att / Math.max(def, 0.01)) * 0.6);
+    target.sailors = Math.floor(target.sailors * survive);
+    target.soldiers = Math.floor(target.soldiers * survive);
+    ship.sailors = Math.floor(ship.sailors * 0.4);
+    ship.soldiers = Math.floor(ship.soldiers * 0.4);
+    state.events.push({ type: 'boardingRepelled', shipId: target.id, attacker: ship.owner, defender: target.owner });
+  }
+}
+
+function removeSunkShips(state: GameState, ctx: TickContext): void {
   const survivors: Ship[] = [];
   for (const s of state.ships) {
-    if (s.hp > 0) {
-      survivors.push(s);
-    } else if (s.order.type !== 'found') {
-      state.events.push({
-        type: 'shipSunk',
-        shipId: s.id,
-        owner: s.owner,
-        by: markSunkBy.get(s.id) ?? NEUTRAL,
-        x: s.x,
-        y: s.y,
-      });
+    if (s.hp > 0) survivors.push(s);
+    else if (!ctx.founded.has(s.id)) {
+      state.events.push({ type: 'shipSunk', shipId: s.id, name: s.name, owner: s.owner, by: ctx.sunkBy.get(s.id) ?? NEUTRAL, x: s.x, y: s.y });
     }
   }
   state.ships = survivors;
-  markSunkBy.clear();
 }
 
 function checkElimination(state: GameState): void {
   const contenders = state.players.filter((p) => p.id !== NEUTRAL);
   for (const p of contenders) {
     if (!p.alive) continue;
-    const hasAny =
-      state.villages.some((v) => v.owner === p.id) || state.ships.some((s) => s.owner === p.id);
+    const hasAny = state.cities.some((c) => c.owner === p.id) || state.ships.some((s) => s.owner === p.id);
     if (!hasAny) {
       p.alive = false;
       state.events.push({ type: 'playerEliminated', player: p.id });
@@ -444,22 +752,3 @@ function checkElimination(state: GameState): void {
   if (contenders.length > 1 && alive.length <= 1) state.winner = alive[0]?.id ?? NEUTRAL;
 }
 
-// ---------------------------------------------------------------- utilità per UI e IA
-
-export function isSeaPoint(state: GameState, p: Point): boolean {
-  return isSea(state.map, Math.floor(p.x), Math.floor(p.y));
-}
-
-export function isLandPoint(state: GameState, p: Point): boolean {
-  return isLand(state.map, Math.floor(p.x), Math.floor(p.y));
-}
-
-export function nearestSeaPoint(state: GameState, p: Point): Point | null {
-  return nearestSea(state.map, p.x, p.y);
-}
-
-export function shipKindsOf(ships: readonly Ship[]): Record<ShipKind, number> {
-  const out: Record<ShipKind, number> = { sloop: 0, galleon: 0, colony: 0 };
-  for (const s of ships) out[s.kind]++;
-  return out;
-}

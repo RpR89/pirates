@@ -10,11 +10,14 @@ export interface Cost {
   wood: number;
 }
 
-export type ShipKind = 'sloop' | 'galleon' | 'colony';
-export type BuildingKind = 'cantiere' | 'mercato' | 'segheria' | 'forte';
+// ------------------------------------------------------------------ navi
+
+export type ShipClass = 'sloop' | 'brigantino' | 'fregata' | 'galeone' | 'mercantile';
+export const SHIP_CLASSES: readonly ShipClass[] = ['sloop', 'brigantino', 'fregata', 'galeone', 'mercantile'];
 
 export interface ShipStats {
   name: string;
+  description: string;
   cost: Cost;
   buildSeconds: number;
   hp: number;
@@ -22,96 +25,175 @@ export interface ShipStats {
   range: number; // caselle
   reloadSeconds: number;
   speed: number; // caselle al secondo
-  shipyardLevel: number; // livello di cantiere richiesto
+  /** Marinai necessari per manovrare a piena efficienza (presi dalla guarnigione al varo). */
+  crew: number;
+  /** Uomini totali trasportabili (marinai + soldati). */
+  capacity: number;
+  /** Coloni imbarcati al varo (solo mercantile): fondano una nuova città. */
+  colonists: number;
+  /** Dimensione minima della città (vedi CITY_TIERS). */
+  tier: number;
+  /** Dimensioni dello sprite visto dall'alto, in pixel. */
+  length: number;
+  beam: number;
 }
 
-export const SHIPS: Record<ShipKind, ShipStats> = {
+export const SHIPS: Record<ShipClass, ShipStats> = {
   sloop: {
-    name: 'SLOOP',
-    cost: { gold: 60, wood: 40 },
-    buildSeconds: 10,
-    hp: 80,
-    damage: 8,
-    range: 4,
-    reloadSeconds: 1.5,
-    speed: 3.2,
-    shipyardLevel: 1,
+    name: 'Sloop',
+    description: 'Piccolo e veloce, ideale per esplorare e cacciare mercantili.',
+    cost: { gold: 80, wood: 60 }, buildSeconds: 12,
+    hp: 100, damage: 6, range: 4.5, reloadSeconds: 1.5, speed: 3.4,
+    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 24, beam: 10,
   },
-  galleon: {
-    name: 'GALEONE',
-    cost: { gold: 160, wood: 120 },
-    buildSeconds: 25,
-    hp: 220,
-    damage: 18,
-    range: 5,
-    reloadSeconds: 2.5,
-    speed: 1.8,
-    shipyardLevel: 2,
+  brigantino: {
+    name: 'Brigantino',
+    description: 'Due alberi, buon equilibrio tra cannoni, velocità e truppe.',
+    cost: { gold: 160, wood: 120 }, buildSeconds: 20,
+    hp: 180, damage: 10, range: 5, reloadSeconds: 1.8, speed: 2.9,
+    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 30, beam: 12,
   },
-  colony: {
-    name: 'COLONIA',
-    cost: { gold: 120, wood: 100 },
-    buildSeconds: 18,
-    hp: 60,
-    damage: 0,
-    range: 0,
-    reloadSeconds: 0,
-    speed: 2.2,
-    shipyardLevel: 1,
+  fregata: {
+    name: 'Fregata',
+    description: 'Nave da guerra rapida con una lunga batteria di cannoni.',
+    cost: { gold: 300, wood: 220 }, buildSeconds: 30,
+    hp: 300, damage: 16, range: 6, reloadSeconds: 2, speed: 2.6,
+    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 38, beam: 14,
+  },
+  galeone: {
+    name: 'Galeone',
+    description: 'Una fortezza galleggiante: lento, ma porta un esercito.',
+    cost: { gold: 420, wood: 320 }, buildSeconds: 40,
+    hp: 450, damage: 20, range: 5.5, reloadSeconds: 2.8, speed: 1.8,
+    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 44, beam: 18,
+  },
+  mercantile: {
+    name: 'Nave coloniale',
+    description: 'Trasporta coloni per fondare una nuova città su una costa libera.',
+    cost: { gold: 150, wood: 150 }, buildSeconds: 20,
+    hp: 120, damage: 0, range: 0, reloadSeconds: 0, speed: 2.4,
+    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 30, beam: 14,
   },
 };
 
-export const SHIP_KINDS: readonly ShipKind[] = ['sloop', 'galleon', 'colony'];
+// ------------------------------------------------------------------ edifici
+
+export type BuildingKind =
+  | 'municipio' | 'casa' | 'fattoria' | 'pescheria' | 'segheria'
+  | 'mercato' | 'cantiere' | 'caserma' | 'torre';
+
+/** Edifici che il giocatore può costruire (il municipio nasce con la città). */
+export const BUILDABLE: readonly BuildingKind[] = [
+  'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma', 'torre',
+];
 
 export interface BuildingStats {
   name: string;
-  baseCost: Cost;
+  description: string;
+  w: number; // caselle
+  h: number;
+  cost: Cost;
   buildSeconds: number;
-  maxLevel: number;
+  hp: number;
+  /** Deve toccare il mare (porto). */
+  coastal: boolean;
+  tier: number;
+  housing: number;
+  food: number; // al secondo
+  wood: number;
+  gold: number;
+  /** Cannoni (torri e municipio). */
+  damage: number;
+  range: number;
+  reloadSeconds: number;
 }
+
+const B = (s: Partial<BuildingStats> & Pick<BuildingStats, 'name' | 'description' | 'w' | 'h' | 'cost' | 'buildSeconds' | 'hp'>): BuildingStats => ({
+  coastal: false, tier: 1, housing: 0, food: 0, wood: 0, gold: 0, damage: 0, range: 0, reloadSeconds: 0, ...s,
+});
 
 export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
-  cantiere: { name: 'CANTIERE', baseCost: { gold: 60, wood: 80 }, buildSeconds: 15, maxLevel: 2 },
-  mercato: { name: 'MERCATO', baseCost: { gold: 50, wood: 40 }, buildSeconds: 12, maxLevel: 3 },
-  segheria: { name: 'SEGHERIA', baseCost: { gold: 40, wood: 30 }, buildSeconds: 10, maxLevel: 3 },
-  forte: { name: 'FORTE', baseCost: { gold: 80, wood: 100 }, buildSeconds: 20, maxLevel: 3 },
+  municipio: B({ name: 'Municipio', description: 'Il cuore della città: alloggi, tasse e un cannone di difesa.', w: 3, h: 3, cost: { gold: 0, wood: 0 }, buildSeconds: 0, hp: 800, housing: 12, gold: 0.6, wood: 0.4, food: 0.8, damage: 5, range: 5, reloadSeconds: 2.5 }),
+  casa: B({ name: 'Casa', description: 'Alloggi per 8 abitanti: la città può crescere.', w: 1, h: 1, cost: { gold: 30, wood: 40 }, buildSeconds: 8, hp: 120, housing: 8 }),
+  fattoria: B({ name: 'Fattoria', description: 'Campi coltivati: produce cibo.', w: 2, h: 2, cost: { gold: 40, wood: 50 }, buildSeconds: 12, hp: 150, food: 1.6 }),
+  pescheria: B({ name: 'Pescheria', description: 'Pontile e barche da pesca: molto cibo, ma va sulla costa.', w: 2, h: 2, cost: { gold: 60, wood: 50 }, buildSeconds: 12, hp: 150, food: 2.2, coastal: true }),
+  segheria: B({ name: 'Segheria', description: 'Taglia il legname: rende di più vicino ai boschi.', w: 2, h: 2, cost: { gold: 40, wood: 20 }, buildSeconds: 10, hp: 150, wood: 1 }),
+  mercato: B({ name: 'Mercato', description: 'Commercio e dazi: produce oro.', w: 2, h: 2, cost: { gold: 80, wood: 80 }, buildSeconds: 15, hp: 180, gold: 1.2, tier: 2 }),
+  cantiere: B({ name: 'Cantiere navale', description: 'Costruisce le navi. Va sulla costa.', w: 2, h: 2, cost: { gold: 100, wood: 120 }, buildSeconds: 18, hp: 250, coastal: true }),
+  caserma: B({ name: 'Caserma', description: 'Arruola marinai e soldati tra gli abitanti.', w: 2, h: 2, cost: { gold: 100, wood: 80 }, buildSeconds: 15, hp: 300 }),
+  torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2 }),
 };
 
-export const BUILDING_KINDS: readonly BuildingKind[] = ['cantiere', 'mercato', 'segheria', 'forte'];
+/** Moltiplicatore della segheria con boschi entro 3 caselle. */
+export const FOREST_BONUS = 1.6;
 
-/** Costo per portare un edificio dal livello `level` a `level + 1`. */
-export function buildingCost(kind: BuildingKind, level: number): Cost {
-  const base = BUILDINGS[kind].baseCost;
-  return { gold: base.gold * (level + 1), wood: base.wood * (level + 1) };
-}
+// ------------------------------------------------------------------ città
 
-export const VILLAGE = {
-  baseHp: 300,
-  hpPerForte: 150,
-  goldPerSecond: 1,
-  goldPerMercato: 1.5,
-  woodPerSecond: 0.5,
-  woodPerSegheria: 1.5,
-  baseDamage: 3,
-  damagePerForte: 5,
-  range: 5,
-  reloadSeconds: 2,
-  regenPerSecond: 3,
-  regenDelaySeconds: 8,
-  /** Distanza minima tra due villaggi (caselle). */
-  minDistance: 10,
-  /** Distanza entro cui una nave può conquistare un villaggio a 0 PF. */
-  conquerRange: 3.5,
-  /** PF (frazione del massimo) con cui riparte un villaggio conquistato o fondato. */
-  restartHpRatio: 0.3,
-  queueMax: 5,
+/** Soglie di popolazione per i livelli della città. */
+export const CITY_TIERS = [
+  { tier: 1, name: 'Villaggio', population: 0 },
+  { tier: 2, name: 'Paese', population: 35 },
+  { tier: 3, name: 'Città', population: 80 },
+] as const;
+
+export const CITY = {
+  /** Gli edifici devono stare entro questa distanza dal centro del municipio. */
+  radius: 7,
+  /** Distanza minima tra i centri di due città. */
+  minDistance: 18,
+  taxPerCitizen: 0.02, // oro al secondo per abitante
+  growthBase: 0.1, // abitanti al secondo
+  growthPerCitizen: 0.0015,
+  starvationLoss: 0.15, // abitanti al secondo persi senza cibo
+  militiaPerCitizen: 0.15, // forza difensiva degli abitanti
+  towerGarrisonBonus: 5,
+  capturePopulationLoss: 0.2,
+  regenDelaySeconds: 10,
+  regenPerSecond: 4,
 };
+
+// ------------------------------------------------------------------ uomini e cibo
+
+export type UnitKind = 'sailors' | 'soldiers';
+
+export const UNITS: Record<UnitKind, { gold: number; trainSeconds: number; power: number }> = {
+  sailors: { gold: 4, trainSeconds: 0.4, power: 0.4 },
+  soldiers: { gold: 10, trainSeconds: 0.8, power: 1 },
+};
+
+export const RECRUIT = {
+  /** Frazione degli abitanti arruolabile in un colpo: città più grandi → più uomini. */
+  maxShare: 0.5,
+  /** Abitanti che devono restare in città. */
+  minPopulation: 4,
+  maxBatch: 50,
+};
+
+export const FOOD = {
+  perCitizen: 0.03, // cibo al secondo
+  perMan: 0.05, // marinai e soldati, in città o in mare
+  /** Ogni quanto, senza cibo, una parte degli uomini diserta. */
+  desertionSeconds: 6,
+  desertionShare: 0.05,
+};
+
+// ------------------------------------------------------------------ combattimento
 
 export const COMBAT = {
-  /** Sotto questa frazione di PF una nave può essere abbordata. */
-  captureHpRatio: 0.3,
-  boardRange: 1.5,
+  boardRange: 1.6,
+  /** Raggio entro cui le navi possono sbarcare truppe o trasferire uomini. */
+  dockRange: 3,
   repathSeconds: 0.5,
+  /** Rapidità delle perdite negli assalti a terra (per tick). */
+  assaultRate: 0.012,
+  minCrewEfficiency: 0.3,
 };
 
-export const START_RESOURCES: Cost = { gold: 200, wood: 150 };
+export const START = {
+  gold: 300,
+  wood: 250,
+  food: 120,
+  population: 18,
+  sailors: 12,
+  soldiers: 8,
+};

@@ -1,0 +1,118 @@
+:root {
+  --ink: #f1e3c2;
+  --ink-dim: #b9a888;
+  --gold: #e9b949;
+  --good: #8fd16a;
+  --bad: #ff7a5c;
+  --panel: rgba(30, 24, 18, 0.94);
+  --panel-2: #2c2219;
+  --edge: #8a6a3e;
+  --edge-dark: #4a3720;
+  --button: #5a3f24;
+  --button-hi: #7a5631;
+  --sea: #10263f;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--sea); }
+body { font-family: 'Pixelify Sans', monospace; color: var(--ink); font-size: 15px; -webkit-font-smoothing: none; font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'clig' 0; }
+button, input, select { font-variant-ligatures: none; font-feature-settings: 'liga' 0, 'clig' 0; }
+#game { position: fixed; inset: 0; }
+#game canvas { image-rendering: pixelated; display: block; }
+#ui { position: fixed; inset: 0; pointer-events: none; }
+#ui .interactive, #ui button, #ui input, #ui select { pointer-events: auto; }
+
+button {
+  font: inherit; color: var(--ink); cursor: pointer;
+  background: var(--button); border: 2px solid var(--edge-dark); border-top-color: var(--edge);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,.35); padding: 4px 10px; border-radius: 2px;
+}
+button:hover:not(:disabled) { background: var(--button-hi); }
+button:active:not(:disabled) { box-shadow: inset 0 2px 0 rgba(0,0,0,.35); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: #8a5a1c; border-color: #4a2f0e; border-top-color: #c38a3a; color: #fff3d6; }
+button.primary:hover:not(:disabled) { background: #a36c24; }
+button.active { background: #9a6a22; color: #fff3d6; }
+button.small { padding: 1px 7px; font-size: 13px; }
+
+input, select {
+  font: inherit; color: var(--ink); background: #17120d; border: 2px solid var(--edge-dark);
+  padding: 4px 8px; border-radius: 2px; min-width: 0;
+}
+input:focus, select:focus { outline: none; border-color: var(--gold); }
+
+.panel {
+  background: var(--panel); border: 2px solid var(--edge); box-shadow: 0 0 0 2px var(--edge-dark), 0 6px 20px rgba(0,0,0,.45);
+  border-radius: 3px; padding: 10px 12px;
+}
+.panel h2 { margin: 0 0 2px; font-size: 20px; font-weight: 600; color: var(--gold); }
+.panel h3 { margin: 10px 0 4px; font-size: 15px; font-weight: 600; color: var(--gold); border-bottom: 1px solid var(--edge-dark); padding-bottom: 2px; }
+.sub { color: var(--ink-dim); font-size: 13px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row.wrap { flex-wrap: wrap; }
+.spread { justify-content: space-between; }
+.grow { flex: 1; }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.gold { color: var(--gold); }
+.muted { color: var(--ink-dim); }
+.mt { margin-top: 8px; }
+.stat { display: flex; justify-content: space-between; font-size: 14px; padding: 1px 0; }
+.stat b { font-weight: 600; }
+
+.bar { height: 6px; background: #17120d; border: 1px solid var(--edge-dark); }
+.bar > div { height: 100%; background: var(--good); }
+.bar.gold > div { background: var(--gold); }
+
+/* Barra superiore */
+.topbar {
+  position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 18px; align-items: center;
+  padding: 6px 14px; flex-wrap: wrap;
+}
+.res { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.res .icon { width: 12px; height: 12px; display: inline-block; border: 1px solid #1b1712; align-self: center; }
+.res .val { font-weight: 600; font-size: 17px; }
+.res .rate { font-size: 12px; }
+
+/* Pannello contestuale a destra */
+.side { position: absolute; top: 64px; right: 8px; width: 360px; max-height: calc(100% - 72px); overflow-y: auto; }
+.side::-webkit-scrollbar { width: 8px; }
+.side::-webkit-scrollbar-thumb { background: var(--edge-dark); }
+
+.card { background: var(--panel-2); border: 1px solid var(--edge-dark); padding: 7px 8px; margin-top: 6px; border-radius: 2px; }
+.card.disabled { opacity: .55; }
+.card .title { font-weight: 600; }
+.cost { font-size: 13px; white-space: nowrap; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+
+/* In basso a sinistra */
+.bottom-left { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 8px; align-items: flex-end; }
+.minimap { padding: 4px; }
+.minimap canvas { display: block; image-rendering: pixelated; cursor: pointer; }
+.actions { display: flex; flex-direction: column; gap: 6px; }
+
+.messages { position: absolute; left: 8px; bottom: 190px; display: flex; flex-direction: column; gap: 4px; max-width: 520px; }
+.message { padding: 4px 10px; font-size: 14px; }
+.message.good { border-color: #4f7a35; }
+.message.bad { border-color: #8a3a2a; }
+
+.mode-hint { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); padding: 6px 14px; }
+
+/* Menu iniziale */
+.menu-backdrop {
+  position: absolute; inset: 0; pointer-events: auto; overflow-y: auto;
+  background: radial-gradient(ellipse at 50% 20%, #1f4f80 0%, #10263f 60%, #08141f 100%);
+  display: flex; justify-content: center; padding: 28px 16px;
+}
+.menu { width: min(980px, 100%); }
+.menu h1 { font-size: 64px; margin: 0; color: var(--gold); text-shadow: 4px 4px 0 #1b1712; letter-spacing: 2px; text-align: center; }
+.menu .tagline { text-align: center; color: var(--ink); margin-bottom: 18px; font-size: 18px; }
+.factions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.faction { cursor: pointer; text-align: left; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.faction.selected { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold), 0 6px 20px rgba(0,0,0,.45); }
+.faction .name { font-size: 18px; font-weight: 600; color: var(--gold); }
+.flag { width: 44px; height: 28px; border: 2px solid #1b1712; position: relative; }
+.overlay { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+.overlay .panel { text-align: center; padding: 24px 32px; }
+.overlay h1 { font-size: 48px; margin: 0 0 8px; color: var(--gold); }
+kbd { background: #17120d; border: 1px solid var(--edge-dark); padding: 0 4px; font-family: inherit; font-size: 12px; }

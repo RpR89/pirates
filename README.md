@@ -1,74 +1,64 @@
 # Pirates
 
-Strategia in tempo reale 2D in pixel art a tema pirati. Costruisci il tuo villaggio,
-vara una flotta, affonda o abborda le navi nemiche, fonda nuove colonie e conquista
-i villaggi avversari in un arcipelago di dimensioni definite.
-
-Oggi si gioca in single player contro l'IA (Barbanera); l'architettura è pronta
+Strategia in tempo reale in pixel art, vista dall'alto, nei mari dei Caraibi.
+Scegli una bandiera (Fratellanza della Costa, Royal Navy, Marine Royale o Armada
+Española), fai crescere le tue città, arruola uomini, vara navi a cui dai un nome
+e conquista l'arcipelago. Single player contro l'IA, con l'architettura pronta
 per il multiplayer.
 
 ## Come si gioca
 
+- **Città.** Clicca sul municipio per il menu della città. Con *Costruisci* scegli
+  un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città: case
+  (abitanti), fattorie e pescherie (cibo), segheria (legno), mercato (oro),
+  cantiere navale, caserma, torri di difesa. Cantiere e pescheria vanno sulla costa.
+- **Popolazione e cibo.** Gli abitanti crescono se c'è cibo e posto nelle case,
+  e pagano le tasse. Abitanti e uomini mangiano: in carestia la gente se ne va e
+  gli uomini disertano. A 35 abitanti la città diventa *paese*, a 80 *città*:
+  si sbloccano edifici e navi più grandi.
+- **Arruolamento.** In caserma arruoli marinai e soldati tra gli abitanti: più la
+  città è grande, più uomini puoi arruolare.
+- **Navi.** Nel cantiere scegli il tipo (sloop, brigantino, fregata, galeone,
+  nave coloniale) e scrivi il nome, o usi quello proposto dalla tua fazione.
+  Ogni nave si può rinominare. I marinai la manovrano, i soldati combattono.
+  In porto imbarchi e sbarchi gli uomini.
+- **Guerra.** Clic destro per attaccare a cannonate. Con l'arrembaggio (`B`)
+  catturi le navi, se i tuoi uomini sono più forti. Bombarda le torri e sbarca le
+  truppe (`L`) per conquistare le città. La nave coloniale fonda nuove città.
+
 | Comando | Azione |
 | --- | --- |
-| Clic sinistro | Seleziona una nave o un villaggio (Shift aggiunge) |
-| Trascina | Selezione multipla delle navi |
-| Clic destro | Muovi, attacca una nave o un villaggio, fonda (nave colonia su una costa) |
-| `1`–`7` | Costruisci navi ed edifici nel villaggio selezionato |
-| `B` | Abbordaggio: le navi sotto il 30% di PF vengono catturate invece che affondate |
-| `X` | Ferma le navi selezionate |
-| Frecce / WASD, rotella | Scorri la mappa, zoom |
-| `H` / `P` | Torna al villaggio / pausa |
-
-- **Villaggi** producono oro e legno. Edifici: *cantiere* (navi; livello 2 per il
-  galeone), *mercato* (oro), *segheria* (legno), *forte* (PF e cannoni).
-- **Navi**: *sloop* (veloce), *galeone* (potente), *colonia* (fonda un villaggio).
-- **Conquista**: porta un villaggio a 0 PF e avvicina una nave.
-- **Vittoria**: elimina tutti gli avversari (niente villaggi né navi).
-
-Con `?seed=123` nell'URL si rigioca la stessa mappa; con `?debug` il gioco è
-ispezionabile da console (`window.game`).
+| Clic sinistro / trascina | Seleziona navi ed edifici |
+| Clic destro | Muovi, attacca, bombarda, fonda |
+| `WASD` / frecce, rotella, tasto centrale | Scorri, zoom, trascina la mappa |
+| `B` / `L` / `X` | Arrembaggio / sbarco / ferma |
+| `H` / `P` / `Esc` | Città / pausa / annulla |
 
 ## Architettura
 
 ```
 src/
-  sim/        simulazione pura e deterministica, nessuna dipendenza da Phaser
-    state.ts        tipi dello stato e creazione della partita
-    simulation.ts   step(): avanza di un tick applicando i comandi
-    commands.ts     tutto ciò che un giocatore può fare
-    rules.ts        bilanciamento (costi, statistiche, tempi)
-    map.ts          generazione dell'arcipelago da seed
-    pathfinding.ts  A* sul mare
-    ai.ts           IA: legge lo stato ed emette comandi come un giocatore
-  net/        sessione a passo fisso e transport dei comandi
-  render/     palette, sprite pixel art, font bitmap, texture
-  scenes/     Phaser: Boot, World (mappa, unità, input), Hud (interfaccia)
+  sim/      simulazione pura e deterministica (regole, stato, comandi, IA, mappa)
+  net/      sessione a passo fisso e transport dei comandi (locale; domani di rete)
+  game/     controller (selezione, modalità, messaggi) e tastiera
+  render/   grafica procedurale: terreno, navi, edifici
+  scenes/   scena Phaser del mondo
+  ui/       menu e pannelli in Preact
 ```
 
-Principi che tengono aperto il multiplayer:
-
-1. **Simulazione separata dalla grafica.** La grafica legge lo stato e gli eventi,
-   non lo modifica mai.
-2. **Solo comandi.** Giocatore e IA agiscono esclusivamente con `Command`
-   serializzabili, validati dalla simulazione (non si comanda ciò che non è tuo).
-3. **Tick fissi e determinismo.** 10 tick/s, nessun `Math.random` né orologio nella
-   simulazione; `hashState()` serve a rilevare desincronizzazioni.
-4. **Transport intercambiabile.** `LocalTransport` oggi; per il multiplayer basta
-   un transport di rete (lockstep o server autoritativo) che implementi
-   `CommandTransport`.
+Il multiplayer resta possibile perché giocatore e IA agiscono solo tramite
+comandi serializzabili, la simulazione è deterministica a 10 tick al secondo e
+`hashState()` permette di rilevare le desincronizzazioni: basta un transport di
+rete al posto di `LocalTransport`.
 
 ## Sviluppo
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm test           # test della simulazione
+npm run dev        # http://localhost:5173 (galleria degli sprite: /art.html)
+npm test
 npm run typecheck
-npm run build      # build di produzione in dist/
+npm run build
 ```
 
-## Deploy
-
-Il repository è pensato per Vercel (preset Vite, nessuna configurazione): ogni
-push su `main` va in produzione, ogni pull request riceve un'anteprima.
+Il deploy su Vercel è automatico a ogni push su `main`.

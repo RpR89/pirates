@@ -1,12 +1,10 @@
 import type { Command, PlayerCommand } from './commands';
+import type { FactionId } from './factions';
 import { step } from './simulation';
 import { createGame, type GameState, type PlayerId } from './state';
 
-export function newGame(seed = 42): GameState {
-  return createGame(seed, [
-    { name: 'UNO', color: '#b13e53' },
-    { name: 'DUE', color: '#ef7d57' },
-  ]);
+export function newGame(seed = 42, factions: FactionId[] = ['inglesi', 'pirati']): GameState {
+  return createGame(seed, factions.map((faction, i) => ({ name: `G${i + 1}`, faction })));
 }
 
 export function run(state: GameState, ticks: number, commands: [PlayerId, Command][] = []): void {
@@ -15,9 +13,10 @@ export function run(state: GameState, ticks: number, commands: [PlayerId, Comman
   for (let i = 1; i < ticks; i++) step(state, []);
 }
 
-/** Primo villaggio e prima nave di un giocatore. */
+/** Prima città, municipio e prima nave di un giocatore. */
 export function home(state: GameState, player: PlayerId) {
-  const village = state.villages.find((v) => v.owner === player)!;
+  const city = state.cities.find((c) => c.owner === player)!;
   const ship = state.ships.find((s) => s.owner === player)!;
-  return { village, ship };
+  const building = (kind: string) => state.buildings.find((b) => b.cityId === city.id && b.kind === kind)!;
+  return { city, ship, building };
 }

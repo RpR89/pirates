@@ -27,7 +27,7 @@ describe('generateMap', () => {
 describe('findPath', () => {
   it('collega i porti dei due giocatori restando in mare', () => {
     const state = newGame();
-    const [a, b] = state.villages;
+    const [a, b] = state.cities;
     const from = { x: a.dock.x + 0.5, y: a.dock.y + 0.5 };
     const path = findPath(state.map, from, { x: b.dock.x + 0.5, y: b.dock.y + 0.5 });
     expect(path).not.toBeNull();
@@ -42,11 +42,11 @@ describe('findPath', () => {
 
   it('se la destinazione è terra, si ferma sulla casella di mare più vicina', () => {
     const state = newGame();
-    const v = state.villages[0];
-    expect(state.map.tiles[v.y * state.map.width + v.x]).not.toBe(Tile.Deep);
-    const path = findPath(state.map, { x: 5.5, y: 5.5 }, { x: v.x + 0.5, y: v.y + 0.5 });
+    const c = state.cities[0];
+    expect(state.map.tiles[c.cy * state.map.width + c.cx]).not.toBe(Tile.Deep);
+    const path = findPath(state.map, { x: 5.5, y: 5.5 }, { x: c.cx + 0.5, y: c.cy + 0.5 });
     const end = path![path!.length - 1];
     expect(isSea(state.map, Math.floor(end.x), Math.floor(end.y))).toBe(true);
-    expect(Math.hypot(end.x - v.x, end.y - v.y)).toBeLessThan(3);
+    expect(Math.hypot(end.x - c.cx, end.y - c.cy)).toBeLessThan(5);
   });
 });
