@@ -8,11 +8,23 @@ import { Minimap } from './Minimap';
 import { BuildingPanel } from './panels/BuildingPanel';
 import { BuildMenu } from './panels/BuildMenu';
 import { ForeignShipPanel, ShipsPanel } from './panels/ShipPanel';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
+import { HeroPanel } from './HeroCard';
+import { portraitUrl } from '../render/portrait';
+import { heroLevel } from '../sim/hero';
+import { heroOf } from '../sim/state';
 
 export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => void }) {
   useGame(ctl);
   const [buildOpen, setBuildOpen] = useState(false);
+  const [heroOpen, setHeroOpen] = useState(false);
+  // I pannelli aperti dai pulsanti si chiudono quando si seleziona qualcosa sulla mappa.
+  useEffect(() => {
+    if (ctl.selection.kind !== 'none') {
+      setHeroOpen(false);
+      setBuildOpen(false);
+    }
+  }, [ctl.selection]);
   const state = ctl.state;
   const me = state.players[ctl.me];
   const faction = FACTIONS[me.faction!];
@@ -34,7 +46,9 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
   if (ships.length) panel = <ShipsPanel ctl={ctl} ships={ships} />;
   else if (building) panel = <BuildingPanel key={building.id} ctl={ctl} building={building} />;
   else if (foreignShip) panel = <ForeignShipPanel ctl={ctl} ship={foreignShip} />;
+  else if (heroOpen) panel = <HeroPanel ctl={ctl} />;
   else if (buildOpen && focusCity) panel = <BuildMenu ctl={ctl} city={focusCity} />;
+  const hero = heroOf(state, ctl.me);
 
   const resource = (label: string, value: number, perSec: number, color: string, warn = false) => (
     <span class="res">
@@ -49,6 +63,22 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
   return (
     <>
       <div class="panel topbar interactive">
+        {hero && (
+          <button
+            class="small"
+            style={{ padding: 2, display: 'flex', alignItems: 'center', gap: 6 }}
+            title="Il tuo capitano"
+            onClick={() => {
+              setBuildOpen(false);
+              ctl.select({ kind: 'none' });
+              setHeroOpen(true);
+              ctl.focusHero(false);
+            }}
+          >
+            <img src={portraitUrl(hero.seed, me.faction!)} width={30} height={30} style={{ imageRendering: 'pixelated', display: 'block' }} alt="" />
+            <span style={{ paddingRight: 6 }}>Lv {heroLevel(hero)}{hero.location.type === 'away' ? ' · disperso' : ''}</span>
+          </button>
+        )}
         <span class="gold" style={{ fontWeight: 600 }}>{me.name}</span>
         <span class="muted">{faction.name}</span>
         {resource('Oro', me.gold, balance.gold, '#e9b949')}
@@ -89,6 +119,7 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
             disabled={!focusCity}
             onClick={() => {
               ctl.select({ kind: 'none' });
+              setHeroOpen(false);
               setBuildOpen(true);
             }}
           >

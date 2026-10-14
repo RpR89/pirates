@@ -1,5 +1,5 @@
 import type { Command } from './commands';
-import { SHIPS, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
+import { BUILDINGS, SHIPS, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
 import {
   buildProblem,
   dockedCity,
@@ -79,6 +79,14 @@ export class AIController {
       if (tight && count('casa') < 14) wants.push('casa');
       if (tier >= 3 && count('mercato') < 2) wants.push('mercato');
       if (count('fattoria') + count('pescheria') < 2 + Math.floor(city.population / 60)) wants.push('pescheria', 'fattoria');
+      const canWall = BUILDINGS.mura.factions?.includes(p.faction!) ?? true;
+      if (canWall && tier >= 2 && count('mura') < 24 && p.wood > 150) {
+        const at = this.wallSpot(state, city);
+        if (at) {
+          out.push({ type: 'placeBuilding', cityId: city.id, kind: 'mura', x: at.x, y: at.y });
+          return;
+        }
+      }
       for (const kind of wants) {
         const at = findPlacement(state, city.id, kind);
         if (at && !buildProblem(state, this.player, city.id, kind, at.x, at.y)) {
@@ -197,6 +205,19 @@ export class AIController {
     if (home && strays.length) {
       out.push({ type: 'move', shipIds: strays.map((s) => s.id), x: home.dock.x + 0.5, y: home.dock.y + 0.5 });
     }
+  }
+
+  /** Un tratto di mura libero sull'anello attorno al municipio. */
+  private wallSpot(state: GameState, city: City): Point | null {
+    const spots: Point[] = [];
+    for (let y = city.cy - 6; y <= city.cy + 6; y++) {
+      for (let x = city.cx - 6; x <= city.cx + 6; x++) {
+        const d = distance({ x, y }, { x: city.cx, y: city.cy });
+        if (d >= 4.5 && d < 5.5) spots.push({ x, y });
+      }
+    }
+    spots.sort((a, b) => a.y - b.y || a.x - b.x);
+    return spots.find((p) => !buildProblem(state, this.player, city.id, 'mura', p.x, p.y)) ?? null;
   }
 
   private chooseTarget(state: GameState, fleet: Ship[]): City | null {

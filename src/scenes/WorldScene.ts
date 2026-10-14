@@ -11,11 +11,13 @@ import { BUILDINGS, CITY, SHIPS, ticks, type BuildingKind, type ShipClass } from
 import { buildProblem } from '../sim/simulation';
 import {
   NEUTRAL,
+  buildingAtTile,
   buildingOwner,
   foundingProblem,
   getCity,
   isEnemy,
   look,
+  placementProblem,
   shipMaxHp,
   type Building,
   type GameEvent,
@@ -64,6 +66,8 @@ export class WorldScene extends Phaser.Scene {
   private panStart: { x: number; y: number; scrollX: number; scrollY: number } | null = null;
   private pointerTile: Point = { x: 0, y: 0 };
   private hoverShip: number | null = null;
+  /** Inizio del tratto di mura che si sta trascinando. */
+  private wallStart: Point | null = null;
 
   constructor() {
     super('World');
@@ -147,12 +151,21 @@ export class WorldScene extends Phaser.Scene {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, drawConstruction(s.w, s.h).toCanvas());
       return key;
     }
-    return this.kindTexture(b.kind, buildingOwner(this.state, b));
+    return this.kindTexture(b.kind, buildingOwner(this.state, b), b.kind === 'mura' ? this.wallMask(b) : 0);
   }
 
-  private kindTexture(kind: BuildingKind, owner: PlayerId): string {
-    const key = `bld-${kind}-${lookId(this.state, owner)}`;
-    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawBuilding(kind, look(this.state, owner).colors).toCanvas());
+  /** Giunzioni di un tratto di mura: si collega a mura e torri vicine (1 N, 2 E, 4 S, 8 O). */
+  private wallMask(b: Building): number {
+    const joins = (x: number, y: number) => {
+      const other = buildingAtTile(this.state, x, y);
+      return !!other && other.cityId === b.cityId && (other.kind === 'mura' || other.kind === 'torre');
+    };
+    return (joins(b.x, b.y - 1) ? 1 : 0) | (joins(b.x + 1, b.y) ? 2 : 0) | (joins(b.x, b.y + 1) ? 4 : 0) | (joins(b.x - 1, b.y) ? 8 : 0);
+  }
+
+  private kindTexture(kind: BuildingKind, owner: PlayerId, mask = 0): string {
+    const key = `bld-${kind}-${lookId(this.state, owner)}${kind === 'mura' ? `-${mask}` : ''}`;
+    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawBuilding(kind, look(this.state, owner).colors, mask).toCanvas());
     return key;
   }
 
@@ -183,7 +196,8 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       if (this.ctl.mode.type === 'place') {
-        this.placeAt(p.event.shiftKey);
+        if (this.ctl.mode.kind === 'mura') this.wallStart = { ...this.pointerTile };
+        else this.placeAt(p.event.shiftKey);
         return;
       }
       if (this.ctl.mode.type === 'land') {
@@ -205,6 +219,11 @@ export class WorldScene extends Phaser.Scene {
     });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       this.panStart = null;
+      if (this.wallStart) {
+        this.placeWalls(this.wallStart, this.pointerTile);
+        this.wallStart = null;
+        return;
+      }
       if (!this.dragStart) return;
       const start = this.dragStart;
       this.dragStart = null;
@@ -625,6 +644,23 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
+    // Capitani: una stella d'oro sopra la nave o il municipio dove si trovano.
+    for (const hero of state.heroes) {
+      const loc = hero.location;
+      let at: Point | null = null;
+      if (loc.type === 'ship') {
+        const v = this.ships.get(loc.shipId);
+        const ship = state.ships.find((x) => x.id === loc.shipId);
+        if (v && ship) at = { x: v.sprite.x, y: v.sprite.y - SHIPS[ship.cls].length * 0.6 - 12 };
+      } else if (loc.type === 'city') {
+        const c = getCity(state, loc.cityId);
+        if (c) at = { x: (c.cx + 0.5) * TILE_PX + TILE_PX * 1.2, y: (c.cy - 1) * TILE_PX - 18 };
+      }
+      if (!at) continue;
+      this.star(g, at.x, at.y, hero.owner === me ? 0xffd54a : 0xff8a6a);
+      if (hero.owner === me && loc.type === 'ship') this.label(at.x, at.y - 5, hero.name, '#ffe7a3');
+    }
+
     // Città: nome, territorio della città selezionata e assedi.
     const focus = selBuilding ? getCity(state, selBuilding.cityId) : null;
     const placing = this.ctl.mode.type === 'place' ? getCity(state, this.ctl.mode.cityId) : null;
@@ -657,10 +693,59 @@ export class WorldScene extends Phaser.Scene {
     for (let i = this.labelIndex; i < this.labels.length; i++) this.labels[i].setVisible(false);
   }
 
+  /** Caselle di una linea a 4 connessioni (i tratti di mura restano uniti). */
+  private wallLine(a: Point, b: Point): Point[] {
+    const out: Point[] = [{ ...a }];
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+    const sx = Math.sign(b.x - a.x);
+    const sy = Math.sign(b.y - a.y);
+    let { x, y } = a;
+    let ix = 0;
+    let iy = 0;
+    for (let i = 0; i < Math.min(dx + dy, 60); i++) {
+      if ((0.5 + ix) / dx < (0.5 + iy) / dy) {
+        x += sx;
+        ix++;
+      } else {
+        y += sy;
+        iy++;
+      }
+      out.push({ x, y });
+    }
+    return out;
+  }
+
+  private placeWalls(a: Point, b: Point): void {
+    const mode = this.ctl.mode;
+    if (mode.type !== 'place') return;
+    const tiles = this.wallLine(a, b).filter((t) => !buildProblem(this.state, this.ctl.me, mode.cityId, 'mura', t.x, t.y));
+    if (!tiles.length) {
+      this.ctl.message(buildProblem(this.state, this.ctl.me, mode.cityId, 'mura', b.x, b.y) ?? 'Qui non si possono costruire mura', 'bad');
+      return;
+    }
+    for (const t of tiles) this.ctl.issue({ type: 'placeBuilding', cityId: mode.cityId, kind: 'mura', x: t.x, y: t.y });
+  }
+
   private updateGhost(): void {
     const mode = this.ctl.mode;
     if (mode.type !== 'place') {
       this.ghost.setVisible(false);
+      return;
+    }
+    if (mode.kind === 'mura') {
+      // Anteprima del tratto: verde dove si può costruire, rosso altrove.
+      this.ghost.setVisible(false);
+      const g = this.overlay;
+      const me = this.state.players[this.ctl.me];
+      let budget = { gold: me.gold, wood: me.wood };
+      for (const t of this.wallLine(this.wallStart ?? this.pointerTile, this.pointerTile)) {
+        const cost = BUILDINGS.mura.cost;
+        const ok = !placementProblem(this.state, this.ctl.me, mode.cityId, 'mura', t.x, t.y) && budget.gold >= cost.gold && budget.wood >= cost.wood;
+        if (ok) budget = { gold: budget.gold - cost.gold, wood: budget.wood - cost.wood };
+        g.fillStyle(ok ? 0x7dff7d : 0xff5a4a, 0.35).fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
+        g.lineStyle(1, ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
+      }
       return;
     }
     const at = this.placementOrigin(mode.kind);
@@ -705,6 +790,17 @@ export class WorldScene extends Phaser.Scene {
     g.lineBetween(x, y, to.x, to.y);
     g.fillStyle(c, 0.8);
     g.fillCircle(to.x, to.y, 1.5);
+  }
+
+  private star(g: Phaser.GameObjects.Graphics, x: number, y: number, color: number): void {
+    const pts: Phaser.Math.Vector2[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 2.2 : 5;
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      pts.push(new Phaser.Math.Vector2(x + Math.cos(a) * r, y + Math.sin(a) * r));
+    }
+    g.fillStyle(0x1b1712, 1).fillCircle(x, y, 6);
+    g.fillStyle(color, 1).fillPoints(pts, true);
   }
 
   private brackets(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number): void {

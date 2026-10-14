@@ -5,6 +5,7 @@ import { BUILDINGS, SHIP_CLASSES, type BuildingKind } from '../sim/rules';
 import { drawBuilding, drawConstruction } from '../render/buildingArt';
 import { drawShip } from '../render/shipArt';
 import { renderChunk, waterDistanceField } from '../render/terrain';
+import { drawPortrait } from '../render/portrait';
 import type { PixelSheet } from '../render/pixels';
 
 const params = new URLSearchParams(location.search);
@@ -48,8 +49,12 @@ if (params.has('terrain')) {
   for (const look of looks) {
     title(look.name);
     for (const cls of SHIP_CLASSES) show(drawShip(cls, look.colors));
-    for (const kind of Object.keys(BUILDINGS) as BuildingKind[]) show(drawBuilding(kind, look.colors), scale - 1);
+    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => k !== 'mura')) show(drawBuilding(kind, look.colors), scale - 1);
   }
+  title('Mura (tutte le giunzioni)');
+  for (let mask = 0; mask < 16; mask++) show(drawBuilding('mura', FACTIONS.spagnoli.colors, mask), scale - 1);
+  title('Capitani');
+  for (const id of FACTION_IDS) for (let seed = 1; seed <= 4; seed++) show(drawPortrait(seed * 7919 + id.length, id), 2);
   title('In costruzione');
   for (const size of [1, 2, 3]) show(drawConstruction(size, size), scale - 1);
 }

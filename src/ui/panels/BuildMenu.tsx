@@ -11,10 +11,19 @@ export function BuildMenu({ ctl, city }: { ctl: GameController; city: City }) {
   return (
     <div>
       <h3>Costruisci a {city.name}</h3>
-      <div class="sub">Scegli un edificio e clicca sulla mappa, entro il cerchio della città. Shift+clic per piazzarne altri; tasto destro o Esc annulla.</div>
+      <div class="sub">Scegli un edificio e clicca sulla mappa, entro il cerchio della città. Shift+clic per piazzarne altri; le mura si tracciano tenendo premuto e trascinando. Tasto destro o Esc annulla.</div>
       {BUILDABLE.map((kind) => {
         const s = BUILDINGS[kind];
-        const locked = tier < s.tier;
+        const forbidden = !!s.factions && !s.factions.includes(me.faction!);
+        if (forbidden && kind === 'mura') {
+          return (
+            <div class="card disabled">
+              <div class="row spread"><span class="title">{s.name}</span></div>
+              <div class="sub">I pirati non costruiscono mura: la loro forza è l’arrembaggio.</div>
+            </div>
+          );
+        }
+        const locked = tier < s.tier || forbidden;
         const affordable = me.gold >= s.cost.gold && me.wood >= s.cost.wood;
         return (
           <div class={`card ${locked ? 'disabled' : ''}`}>
@@ -25,7 +34,7 @@ export function BuildMenu({ ctl, city }: { ctl: GameController; city: City }) {
             <div class="sub">{s.description}</div>
             <div class="row spread mt" style={{ marginTop: 4 }}>
               <span class="sub">
-                {s.w}×{s.h} caselle{s.coastal ? ' · sulla costa' : ''}
+                {kind === 'mura' ? 'trascina per tracciare il muro' : `${s.w}×${s.h} caselle`}{s.coastal ? ' · sulla costa' : ''}
                 {locked ? ` · serve ${CITY_TIERS[s.tier - 1].name.toLowerCase()} (${CITY_TIERS[s.tier - 1].population} ab.)` : ''}
               </span>
               <button

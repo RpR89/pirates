@@ -1,5 +1,7 @@
 // Bilanciamento del gioco: tutti i numeri modificabili stanno qui.
 
+import type { FactionId } from './factions';
+
 export const TICK_RATE = 10; // tick di simulazione al secondo
 export const TICK_MS = 1000 / TICK_RATE;
 
@@ -44,35 +46,35 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
     description: 'Piccolo e veloce, ideale per esplorare e cacciare mercantili.',
     cost: { gold: 80, wood: 60 }, buildSeconds: 12,
     hp: 100, damage: 6, range: 4.5, reloadSeconds: 1.5, speed: 3.4,
-    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 24, beam: 10,
+    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 36, beam: 15,
   },
   brigantino: {
     name: 'Brigantino',
     description: 'Due alberi, buon equilibrio tra cannoni, velocità e truppe.',
     cost: { gold: 160, wood: 120 }, buildSeconds: 20,
     hp: 180, damage: 10, range: 5, reloadSeconds: 1.8, speed: 2.9,
-    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 30, beam: 12,
+    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 45, beam: 18,
   },
   fregata: {
     name: 'Fregata',
     description: 'Nave da guerra rapida con una lunga batteria di cannoni.',
     cost: { gold: 300, wood: 220 }, buildSeconds: 30,
     hp: 300, damage: 16, range: 6, reloadSeconds: 2, speed: 2.6,
-    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 38, beam: 14,
+    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 57, beam: 21,
   },
   galeone: {
     name: 'Galeone',
     description: 'Una fortezza galleggiante: lento, ma porta un esercito.',
     cost: { gold: 420, wood: 320 }, buildSeconds: 40,
     hp: 450, damage: 20, range: 5.5, reloadSeconds: 2.8, speed: 1.8,
-    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 44, beam: 18,
+    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 66, beam: 27,
   },
   mercantile: {
     name: 'Nave coloniale',
     description: 'Trasporta coloni per fondare una nuova città su una costa libera.',
     cost: { gold: 150, wood: 150 }, buildSeconds: 20,
     hp: 120, damage: 0, range: 0, reloadSeconds: 0, speed: 2.4,
-    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 30, beam: 14,
+    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 45, beam: 21,
   },
 };
 
@@ -80,11 +82,11 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
 
 export type BuildingKind =
   | 'municipio' | 'casa' | 'fattoria' | 'pescheria' | 'segheria'
-  | 'mercato' | 'cantiere' | 'caserma' | 'torre';
+  | 'mercato' | 'cantiere' | 'caserma' | 'torre' | 'mura';
 
 /** Edifici che il giocatore può costruire (il municipio nasce con la città). */
 export const BUILDABLE: readonly BuildingKind[] = [
-  'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma', 'torre',
+  'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma', 'torre', 'mura',
 ];
 
 export interface BuildingStats {
@@ -106,6 +108,8 @@ export interface BuildingStats {
   damage: number;
   range: number;
   reloadSeconds: number;
+  /** Se presente, solo queste fazioni possono costruirlo. */
+  factions?: readonly FactionId[];
 }
 
 const B = (s: Partial<BuildingStats> & Pick<BuildingStats, 'name' | 'description' | 'w' | 'h' | 'cost' | 'buildSeconds' | 'hp'>): BuildingStats => ({
@@ -121,7 +125,17 @@ export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
   mercato: B({ name: 'Mercato', description: 'Commercio e dazi: produce oro.', w: 2, h: 2, cost: { gold: 80, wood: 80 }, buildSeconds: 15, hp: 180, gold: 1.2, tier: 2 }),
   cantiere: B({ name: 'Cantiere navale', description: 'Costruisce le navi. Va sulla costa.', w: 2, h: 2, cost: { gold: 100, wood: 120 }, buildSeconds: 18, hp: 250, coastal: true }),
   caserma: B({ name: 'Caserma', description: 'Arruola marinai e soldati tra gli abitanti.', w: 2, h: 2, cost: { gold: 100, wood: 80 }, buildSeconds: 15, hp: 300 }),
+  mura: B({ name: 'Mura', description: 'Tratto di mura in pietra: si piazza trascinando. Rende la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 6, wood: 10 }, buildSeconds: 4, hp: 400, factions: ['inglesi', 'francesi', 'spagnoli'] }),
   torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2 }),
+};
+
+export const WALLS = {
+  /** Ogni tratto di mura aumenta la forza della guarnigione di questa frazione... */
+  defensePerSegment: 0.04,
+  /** ...fino a questo massimo. */
+  maxDefense: 1.2,
+  /** Forza difensiva fissa di ogni tratto (come la milizia: non subisce perdite). */
+  militiaPerSegment: 1.5,
 };
 
 /** Moltiplicatore della segheria con boschi entro 3 caselle. */

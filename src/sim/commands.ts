@@ -18,7 +18,11 @@ export type Command =
   | { type: 'recruit'; buildingId: number; unit: UnitKind; count: number }
   /** Positivo: imbarca dalla città alla nave; negativo: sbarca in città. */
   | { type: 'transfer'; shipId: number; cityId: number; sailors: number; soldiers: number }
-  | { type: 'renameShip'; shipId: number; name: string };
+  | { type: 'renameShip'; shipId: number; name: string }
+  /** Il capitano sale sulla nave (in porto nella città dove si trova). */
+  | { type: 'heroBoard'; shipId: number }
+  /** Il capitano scende nella città dove la sua nave è in porto. */
+  | { type: 'heroLand' };
 
 export interface PlayerCommand {
   player: PlayerId;

@@ -1,4 +1,5 @@
 import { FACTIONS, NEUTRAL_CITY_NAMES, NEUTRAL_LOOK, type FactionId } from './factions';
+import { generateHero, type Hero, type HeroProfile } from './hero';
 import { Tile, findCoastalSites, generateMap, isLand, isSea, nearestSea, tileAt, type Point, type TileMap } from './map';
 import { mulberry32, shuffle } from './rng';
 import {
@@ -108,6 +109,9 @@ export type GameEvent =
   | { type: 'cityCaptured'; cityId: number; from: PlayerId; to: PlayerId }
   | { type: 'cityFounded'; cityId: number; owner: PlayerId }
   | { type: 'famine'; owner: PlayerId }
+  | { type: 'heroLost'; owner: PlayerId; reason: 'shipwreck' | 'captured' | 'cityLost' }
+  | { type: 'heroReturned'; owner: PlayerId; cityId: number }
+  | { type: 'heroLevelUp'; owner: PlayerId; level: number }
   | { type: 'playerEliminated'; player: PlayerId };
 
 export interface GameState {
@@ -120,6 +124,8 @@ export interface GameState {
   ships: Ship[];
   nextId: number;
   neutralNames: string[];
+  /** Il capitano di ogni giocatore (neutrali esclusi). */
+  heroes: Hero[];
   events: GameEvent[];
   winner: PlayerId | null;
 }
@@ -127,6 +133,8 @@ export interface GameState {
 export interface PlayerSetup {
   name: string;
   faction: FactionId;
+  /** Capitano già generato (dal menu); se manca viene generato dal seme della partita. */
+  hero?: HeroProfile;
 }
 
 export interface GameOptions {
@@ -162,6 +170,20 @@ export function getShip(state: GameState, id: number): Ship | undefined {
 
 export function getCity(state: GameState, id: number): City | undefined {
   return state.cities.find((c) => c.id === id);
+}
+
+export function heroOf(state: GameState, owner: PlayerId): Hero | undefined {
+  return state.heroes.find((h) => h.owner === owner);
+}
+
+/** Il capitano imbarcato su questa nave, se c'è. */
+export function heroOnShip(state: GameState, shipId: number): Hero | undefined {
+  return state.heroes.find((h) => h.location.type === 'ship' && h.location.shipId === shipId);
+}
+
+/** Il capitano presente in questa città, se c'è. */
+export function heroInCity(state: GameState, cityId: number): Hero | undefined {
+  return state.heroes.find((h) => h.location.type === 'city' && h.location.cityId === cityId);
 }
 
 export function getBuilding(state: GameState, id: number): Building | undefined {
@@ -319,6 +341,7 @@ export function placementProblem(
   if (!city || city.owner !== player) return 'Non è una tua città';
   if (kind === 'municipio') return 'Il municipio nasce solo con una nuova città';
   const s = BUILDINGS[kind];
+  if (s.factions && !s.factions.includes(state.players[player]?.faction as FactionId)) return 'La tua fazione non può costruirlo';
   if (cityTier(city) < s.tier) return `Serve un ${tierName(s.tier).toLowerCase()} (popolazione ${CITY_TIERS[s.tier - 1].population})`;
   const center = cityCenter(city);
   for (let j = 0; j < s.h; j++) {
@@ -491,6 +514,7 @@ export function createGame(seed: number, setups: PlayerSetup[], options: GameOpt
     ships: [],
     nextId: 1,
     neutralNames: shuffle([...NEUTRAL_CITY_NAMES], rng),
+    heroes: [],
     events: [],
     winner: null,
   };
@@ -514,6 +538,8 @@ export function createGame(seed: number, setups: PlayerSetup[], options: GameOpt
     const yard = state.buildings.find((b) => b.cityId === city.id && b.kind === 'cantiere');
     const dock = yard ? shipyardDock(state, yard) : { x: city.dock.x + 0.5, y: city.dock.y + 0.5 };
     spawnShip(state, owner, 'sloop', dock.x, dock.y, undefined, { sailors: 8, soldiers: 4 });
+    const profile = setups[i].hero ?? generateHero(Math.floor(rng() * 1e9), setups[i].faction, FACTIONS[setups[i].faction].leader);
+    state.heroes.push({ ...profile, skills: { ...profile.skills }, owner, xp: 0, location: { type: 'city', cityId: city.id } });
   });
 
   const neutralCount = options.neutralCities ?? 8;

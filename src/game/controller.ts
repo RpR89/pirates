@@ -3,6 +3,7 @@ import { LocalTransport } from '../net/transport';
 import { AIController } from '../sim/ai';
 import type { Command } from '../sim/commands';
 import { FACTIONS, FACTION_IDS, type FactionId } from '../sim/factions';
+import type { HeroProfile } from '../sim/hero';
 import type { Point } from '../sim/map';
 import { mulberry32, shuffle } from '../sim/rng';
 import { BUILDINGS, SHIPS, type BuildingKind } from '../sim/rules';
@@ -25,6 +26,8 @@ export interface GameSetup {
   captain: string;
   rivals: number;
   seed: number;
+  /** Il capitano generato nel menu iniziale. */
+  hero?: HeroProfile;
 }
 
 export type Selection =
@@ -69,7 +72,7 @@ export class GameController {
     const rng = mulberry32(setup.seed ^ 0x5bd1e995);
     const others = shuffle(FACTION_IDS.filter((f) => f !== setup.faction), rng).slice(0, setup.rivals);
     const state = createGame(setup.seed, [
-      { name: setup.captain || 'Capitano', faction: setup.faction },
+      { name: setup.captain || 'Capitano', faction: setup.faction, hero: setup.hero },
       ...others.map((f) => ({ name: FACTIONS[f].leader, faction: f })),
     ]);
     const ais = others.map((_, i) => new AIController(i + 2));
@@ -144,6 +147,29 @@ export class GameController {
     return this.state.cities.find((c) => c.owner === this.me) ?? null;
   }
 
+  /** Centra la visuale sul capitano (e, se richiesto, seleziona la sua nave o città). */
+  focusHero(select = true): void {
+    const hero = this.state.heroes.find((h) => h.owner === this.me);
+    if (!hero) return;
+    const loc = hero.location;
+    if (loc.type === 'ship') {
+      const ship = getShip(this.state, loc.shipId);
+      if (ship) {
+        this.centerOn(ship);
+        if (select) this.select({ kind: 'ships', ids: [ship.id] });
+      }
+    } else if (loc.type === 'city') {
+      const city = getCity(this.state, loc.cityId);
+      const hall = city && this.state.buildings.find((b) => b.cityId === city.id && b.kind === 'municipio');
+      if (city && hall) {
+        this.centerOn({ x: city.cx + 0.5, y: city.cy + 0.5 });
+        if (select) this.select({ kind: 'building', id: hall.id });
+      }
+    } else {
+      this.message('Il capitano è disperso: tornerà presto in una tua città.', 'info');
+    }
+  }
+
   stopSelected(): void {
     const ids = this.selectedShips().map((s) => s.id);
     if (ids.length) this.issue({ type: 'stop', shipIds: ids });
@@ -203,7 +229,7 @@ export class GameController {
           if (e.owner === me) this.message(`${e.count} ${e.unit === 'sailors' ? 'marinai' : 'soldati'} arruolati a ${cityName(e.cityId)}`, 'info');
           break;
         case 'buildingDone':
-          if (e.owner === me) this.message(`${BUILDINGS[e.kind].name} completato`, 'info');
+          if (e.owner === me && e.kind !== 'mura') this.message(`${BUILDINGS[e.kind].name} completato`, 'info');
           break;
         case 'buildingDestroyed':
           if (e.owner === me) this.message(`Il nemico ha distrutto un edificio: ${BUILDINGS[e.kind].name}`, 'bad');
@@ -225,6 +251,18 @@ export class GameController {
           break;
         case 'famine':
           if (e.owner === me) this.message('Carestia! Senza cibo la gente se ne va e gli uomini disertano.', 'bad');
+          break;
+        case 'heroLost':
+          if (e.owner === me) {
+            const why = e.reason === 'shipwreck' ? 'è naufragato' : e.reason === 'captured' ? 'è fuggito dalla nave catturata' : 'è fuggito dalla città perduta';
+            this.message(`Il tuo capitano ${why}: tornerà tra un minuto.`, 'bad');
+          }
+          break;
+        case 'heroReturned':
+          if (e.owner === me) this.message(`Il capitano è tornato a ${cityName(e.cityId)}.`, 'good');
+          break;
+        case 'heroLevelUp':
+          if (e.owner === me) this.message(`Il tuo capitano è salito al livello ${e.level}!`, 'good');
           break;
         case 'playerEliminated':
           if (e.player !== me) this.message(`${who(e.player)} è stato sconfitto!`, 'good');

@@ -24,7 +24,8 @@ export interface Faction {
   };
   modifiers: {
     boarding: number; // forza nell'abbordaggio
-    soldierPower: number; // forza dei soldati negli assalti
+    soldierPower: number; // forza dei soldati nel corpo a corpo (assalti e arrembaggi)
+    soldierHp: number; // resistenza dei soldati: perdite divise per questo valore
     cannonDamage: number;
     shipHp: number;
     shipSpeed: number;
@@ -38,6 +39,7 @@ export interface Faction {
 const NEUTRAL_MODS: Faction['modifiers'] = {
   boarding: 1,
   soldierPower: 1,
+  soldierHp: 1,
   cannonDamage: 1,
   shipHp: 1,
   shipSpeed: 1,
@@ -53,12 +55,12 @@ export const FACTIONS: Record<FactionId, Faction> = {
     soldiers: 'Filibustieri',
     sailors: 'Ciurma',
     description: 'Fuorilegge senza bandiera: navi agili, arrembaggi feroci.',
-    bonus: 'Abbordaggio +40%, sloop e brigantini costano il 20% in meno',
+    bonus: 'Arrembaggio +80%, corpo a corpo +40%, sloop e brigantini -15%. Niente mura.',
     colors: {
       flag: '#1a1c2c', flagDetail: '#f4f4f4', sail: '#3a3f4f', sailShade: '#2a2d3a',
       hull: '#5b3a24', hullStripe: '#8f2f2f', roof: '#6b4a2e', roofShade: '#4e3520', wall: '#a7825a',
     },
-    modifiers: { ...NEUTRAL_MODS, boarding: 1.4, smallShipCost: 0.8 },
+    modifiers: { ...NEUTRAL_MODS, boarding: 1.8, soldierPower: 1.4, smallShipCost: 0.85 },
     shipNames: [
       'Vendetta Nera', "Teschio d'Oro", 'Squalo Rosso', 'Corvo dei Mari', 'Fortuna Ribelle',
       'Lama Insanguinata', 'Spettro del Sud', 'Sirena Dannata', 'Tempesta', 'Re dei Mari',
@@ -74,12 +76,12 @@ export const FACTIONS: Record<FactionId, Faction> = {
     soldiers: 'Royal Marines',
     sailors: 'Marinai',
     description: 'La flotta più disciplinata del mondo, maestra nel cannoneggiamento.',
-    bonus: 'Danno dei cannoni +20%, scafi +10%',
+    bonus: 'Cannoni +40%, scafi +20%: imbattibili nello scontro tra navi',
     colors: {
       flag: '#b8283a', flagDetail: '#f4f4f4', sail: '#f2efe6', sailShade: '#cfc9b8',
       hull: '#26232b', hullStripe: '#e3b23c', roof: '#5a6170', roofShade: '#434957', wall: '#a24b3b',
     },
-    modifiers: { ...NEUTRAL_MODS, cannonDamage: 1.2, shipHp: 1.1 },
+    modifiers: { ...NEUTRAL_MODS, cannonDamage: 1.4, shipHp: 1.2 },
     shipNames: [
       'HMS Victory', 'HMS Dauntless', 'HMS Valiant', 'HMS Resolute', 'HMS Indomitable',
       'HMS Defiance', 'HMS Intrepid', 'HMS Thunderer', 'HMS Bellerophon', 'HMS Agamemnon',
@@ -94,13 +96,13 @@ export const FACTIONS: Record<FactionId, Faction> = {
     leader: 'Ammiraglio de Grasse',
     soldiers: 'Fusiliers Marins',
     sailors: 'Matelots',
-    description: 'Navi eleganti e velocissime, progettate dai migliori ingegneri.',
-    bonus: 'Velocità delle navi +15%',
+    description: 'L’esercito più solido d’Europa: i suoi soldati non arretrano.',
+    bonus: 'Soldati con il 70% di PF in più: perdono molti meno uomini',
     colors: {
       flag: '#2b4ea2', flagDetail: '#f4f4f4', sail: '#f4f1e8', sailShade: '#d2ccbb',
       hull: '#2c3f6b', hullStripe: '#d9c27a', roof: '#4f6a8f', roofShade: '#3b5272', wall: '#e8dcc0',
     },
-    modifiers: { ...NEUTRAL_MODS, shipSpeed: 1.15 },
+    modifiers: { ...NEUTRAL_MODS, soldierHp: 1.7 },
     shipNames: [
       'Le Redoutable', "L'Intrépide", 'Le Triomphant', 'La Gloire', 'Le Fougueux',
       "L'Aigle", 'Le Héros', 'La Belle Poule', 'Le Formidable', 'Le Vengeur',
@@ -115,13 +117,13 @@ export const FACTIONS: Record<FactionId, Faction> = {
     leader: 'Almirante Gravina',
     soldiers: 'Infantería de Marina',
     sailors: 'Marineros',
-    description: "Padroni delle miniere del Nuovo Mondo e dei tercios più temuti.",
-    bonus: 'Oro +25%, soldati +15% negli assalti',
+    description: 'Padroni delle miniere d’argento del Nuovo Mondo.',
+    bonus: 'Produzione di oro +60%',
     colors: {
       flag: '#c8a227', flagDetail: '#a3242f', sail: '#efe8d5', sailShade: '#cbc0a3',
       hull: '#6b2a22', hullStripe: '#d6a64a', roof: '#b5532f', roofShade: '#8e3f22', wall: '#efe6d4',
     },
-    modifiers: { ...NEUTRAL_MODS, goldIncome: 1.25, soldierPower: 1.15 },
+    modifiers: { ...NEUTRAL_MODS, goldIncome: 1.6 },
     shipNames: [
       'Santísima Trinidad', 'San Juan Nepomuceno', 'Nuestra Señora de Atocha', 'San Ildefonso',
       'Príncipe de Asturias', 'Santa Ana', 'San Felipe', 'Neptuno', 'Rayo', 'Bahama', 'Monarca',

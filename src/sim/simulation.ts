@@ -1,5 +1,6 @@
 import type { Command, PlayerCommand } from './commands';
 import { sanitizeName } from './factions';
+import { HERO, heroCityBonus, heroLevel, heroShipBonus, type Hero } from './hero';
 import { Tile, nearestSea, tileAt, type Point } from './map';
 import { findPath } from './pathfinding';
 import {
@@ -10,6 +11,7 @@ import {
   FOREST_BONUS,
   RECRUIT,
   SHIPS,
+  WALLS,
   TICK_RATE,
   UNITS,
   ticks,
@@ -32,6 +34,9 @@ import {
   getBuilding,
   getCity,
   getShip,
+  heroInCity,
+  heroOf,
+  heroOnShip,
   housing,
   isComplete,
   isEnemy,
@@ -59,7 +64,7 @@ import {
 export function step(state: GameState, commands: readonly PlayerCommand[]): void {
   if (state.winner !== null) return;
   state.events = [];
-  const ctx: TickContext = { sunkBy: new Map(), founded: new Set() };
+  const ctx: TickContext = { sunkBy: new Map(), founded: new Map() };
 
   const ordered = [...commands].sort((a, b) => a.player - b.player);
   for (const c of ordered) applyCommand(state, c.player, c.command);
@@ -70,6 +75,7 @@ export function step(state: GameState, commands: readonly PlayerCommand[]): void
   for (const ship of state.ships) updateShip(state, ship, ctx);
   removeSunkShips(state, ctx);
   removeDestroyedBuildings(state);
+  updateHeroes(state);
   checkElimination(state);
 
   state.tick++;
@@ -78,8 +84,8 @@ export function step(state: GameState, commands: readonly PlayerCommand[]): void
 interface TickContext {
   /** Chi ha affondato ogni nave in questo tick. */
   sunkBy: Map<number, PlayerId>;
-  /** Navi coloniali sbarcate per fondare una città (non affondate). */
-  founded: Set<number>;
+  /** Navi coloniali sbarcate per fondare una città (non affondate) → città fondata. */
+  founded: Map<number, number>;
 }
 
 // ================================================================ costi e rendite
@@ -314,6 +320,23 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
       transfer(ship, city, 'soldiers', Math.trunc(cmd.soldiers));
       break;
     }
+    case 'heroBoard': {
+      const hero = heroOf(state, player);
+      const [ship] = ownedShips(state, player, [cmd.shipId]);
+      if (!hero || !ship || hero.location.type !== 'city') return;
+      if (dockedCity(state, ship)?.id !== hero.location.cityId) return;
+      hero.location = { type: 'ship', shipId: ship.id };
+      break;
+    }
+    case 'heroLand': {
+      const hero = heroOf(state, player);
+      if (!hero || hero.location.type !== 'ship') return;
+      const ship = getShip(state, hero.location.shipId);
+      const city = ship && dockedCity(state, ship);
+      if (!city) return;
+      hero.location = { type: 'city', cityId: city.id };
+      break;
+    }
     case 'renameShip': {
       const [ship] = ownedShips(state, player, [cmd.shipId]);
       const name = sanitizeName(cmd.name);
@@ -384,27 +407,47 @@ function towersAlive(state: GameState, city: City): number {
   return cityBuildings(state, city.id).filter((b) => b.kind === 'torre' && isComplete(b) && b.hp > 0).length;
 }
 
-/** Forza difensiva della milizia cittadina e delle torri (non subisce perdite). */
+export function wallsAlive(state: GameState, city: City): number {
+  return cityBuildings(state, city.id).filter((b) => b.kind === 'mura' && isComplete(b) && b.hp > 0).length;
+}
+
+/** Moltiplicatore della guarnigione dato da mura e capitano. */
+export function defenseMultiplier(state: GameState, city: City): number {
+  const walls = 1 + Math.min(WALLS.maxDefense, wallsAlive(state, city) * WALLS.defensePerSegment);
+  const hero = heroInCity(state, city.id);
+  return walls * (hero ? heroCityBonus(hero).defense : 1);
+}
+
+/** Forza difensiva di milizia cittadina, torri e mura (non subisce perdite). */
 export function militiaStrength(state: GameState, city: City): number {
-  return city.population * CITY.militiaPerCitizen + towersAlive(state, city) * CITY.towerGarrisonBonus;
+  return (
+    city.population * CITY.militiaPerCitizen +
+    towersAlive(state, city) * CITY.towerGarrisonBonus +
+    wallsAlive(state, city) * WALLS.militiaPerSegment
+  );
 }
 
 export function garrisonStrength(state: GameState, city: City): number {
   const power = modifiers(state, city.owner).soldierPower;
-  return city.garrison.soldiers * UNITS.soldiers.power * power + city.garrison.sailors * UNITS.sailors.power;
+  const base = city.garrison.soldiers * UNITS.soldiers.power * power + city.garrison.sailors * UNITS.sailors.power;
+  return base * defenseMultiplier(state, city);
 }
 
 function resolveAssault(state: GameState, city: City): void {
   const siege = city.siege!;
-  const attPower = UNITS.soldiers.power * modifiers(state, siege.owner).soldierPower;
+  const attMods = modifiers(state, siege.owner);
+  const attPower = UNITS.soldiers.power * attMods.soldierPower;
   const att = siege.soldiers * attPower;
   const garrison = garrisonStrength(state, city);
   const militia = militiaStrength(state, city);
 
-  siege.soldiers -= ((garrison + militia) * COMBAT.assaultRate) / attPower;
+  // Le perdite si dividono per la resistenza (PF) dei soldati di ciascuna fazione.
+  siege.soldiers -= ((garrison + militia) * COMBAT.assaultRate) / (attPower * attMods.soldierHp);
 
-  let loss = att * COMBAT.assaultRate;
-  const defPower = UNITS.soldiers.power * modifiers(state, city.owner).soldierPower;
+  const defMods = modifiers(state, city.owner);
+  // Mura e capitano moltiplicano la forza: per ucciderli serve più danno.
+  let loss = (att * COMBAT.assaultRate) / (defMods.soldierHp * defenseMultiplier(state, city));
+  const defPower = UNITS.soldiers.power * defMods.soldierPower;
   const soldierLoss = Math.min(city.garrison.soldiers, loss / defPower);
   city.garrison.soldiers -= soldierLoss;
   loss -= soldierLoss * defPower;
@@ -421,6 +464,8 @@ function resolveAssault(state: GameState, city: City): void {
 
 function captureCity(state: GameState, city: City, newOwner: PlayerId, soldiers: number): void {
   const from = city.owner;
+  const hero = heroInCity(state, city.id);
+  if (hero) loseHero(state, hero, 'cityLost');
   city.owner = newOwner;
   city.garrison = { sailors: 0, soldiers };
   city.siege = null;
@@ -494,7 +539,8 @@ function buildingFire(state: GameState, b: Building, city: City, ctx: TickContex
     }
   }
   if (!target) return;
-  target.hp -= stats.damage * modifiers(state, city.owner).cannonDamage;
+  const hero = heroInCity(state, city.id);
+  target.hp -= stats.damage * modifiers(state, city.owner).cannonDamage * (hero ? heroCityBonus(hero).towers : 1);
   b.cooldown = ticks(stats.reloadSeconds);
   state.events.push({ type: 'shot', from: center, to: { x: target.x, y: target.y } });
   if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) ctx.sunkBy.set(target.id, city.owner);
@@ -521,7 +567,9 @@ function chase(state: GameState, ship: Ship, goal: Point): void {
 }
 
 function moveAlongPath(state: GameState, ship: Ship): void {
-  let remaining = (SHIPS[ship.cls].speed * modifiers(state, ship.owner).shipSpeed * crewEfficiency(ship)) / TICK_RATE;
+  const hero = heroOnShip(state, ship.id);
+  const heroSpeed = hero ? heroShipBonus(hero).speed : 1;
+  let remaining = (SHIPS[ship.cls].speed * modifiers(state, ship.owner).shipSpeed * heroSpeed * crewEfficiency(ship)) / TICK_RATE;
   while (remaining > 0 && ship.path.length > 0) {
     const wp = ship.path[0];
     const dx = wp.x - ship.x;
@@ -626,7 +674,7 @@ function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {
       const dock = nearestSea(state.map, order.x, order.y, 4);
       if (dock && distance(ship, { x: dock.x + 0.5, y: dock.y + 0.5 }) <= 2) {
         const city = addCity(state, ship.owner, order.x, order.y, ship.colonists, { sailors: ship.sailors, soldiers: ship.soldiers });
-        ctx.founded.add(ship.id);
+        ctx.founded.set(ship.id, city.id);
         ship.hp = 0;
         state.events.push({ type: 'cityFounded', cityId: city.id, owner: ship.owner });
         return;
@@ -678,7 +726,8 @@ function shipFire(state: GameState, ship: Ship, ctx: TickContext): void {
 }
 
 function damageOf(state: GameState, ship: Ship): number {
-  return SHIPS[ship.cls].damage * modifiers(state, ship.owner).cannonDamage;
+  const hero = heroOnShip(state, ship.id);
+  return SHIPS[ship.cls].damage * modifiers(state, ship.owner).cannonDamage * (hero ? heroShipBonus(hero).cannon : 1);
 }
 
 function reloadTicks(ship: Ship): number {
@@ -689,13 +738,17 @@ function fireAt(state: GameState, ship: Ship, target: Ship, ctx: TickContext): v
   target.hp -= damageOf(state, ship);
   ship.cooldown = reloadTicks(ship);
   state.events.push({ type: 'shot', from: { x: ship.x, y: ship.y }, to: { x: target.x, y: target.y } });
-  if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) ctx.sunkBy.set(target.id, ship.owner);
+  if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) {
+    ctx.sunkBy.set(target.id, ship.owner);
+    gainXp(state, heroOnShip(state, ship.id), 1);
+  }
 }
 
 /** Forza di un equipaggio nell'arrembaggio. */
 export function boardingStrength(state: GameState, s: Ship): number {
   const m = modifiers(state, s.owner);
-  return (s.soldiers * UNITS.soldiers.power * m.soldierPower + s.sailors * UNITS.sailors.power) * m.boarding;
+  const hero = heroOnShip(state, s.id);
+  return (s.soldiers * UNITS.soldiers.power * m.soldierPower + s.sailors * UNITS.sailors.power) * m.boarding * (hero ? heroShipBonus(hero).boarding : 1);
 }
 
 function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
@@ -704,8 +757,10 @@ function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
   const def = boardingStrength(state, target) * (0.5 + 0.5 * (target.hp / shipMaxHp(state, target)));
   idle(ship);
   if (att <= 0) return;
+  const attHp = modifiers(state, ship.owner).soldierHp;
+  const defHp = modifiers(state, target.owner).soldierHp;
   if (att > def) {
-    const survive = 1 - (def / att) * 0.6;
+    const survive = 1 - ((def / att) * 0.6) / attHp;
     ship.sailors = Math.floor(ship.sailors * survive);
     ship.soldiers = Math.floor(ship.soldiers * survive);
     const prizeCrew = Math.min(SHIPS[target.cls].crew, Math.floor(ship.sailors / 2));
@@ -716,13 +771,17 @@ function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
     target.colonists = 0;
     ship.sailors -= prizeCrew;
     idle(target);
+    const captain = heroOnShip(state, target.id);
+    if (captain) loseHero(state, captain, 'captured');
+    gainXp(state, heroOnShip(state, ship.id), 2);
     state.events.push({ type: 'shipCaptured', shipId: target.id, name: target.name, from, to: ship.owner });
   } else {
-    const survive = 1 - Math.min(0.9, (att / Math.max(def, 0.01)) * 0.6);
+    const survive = 1 - Math.min(0.9, (att / Math.max(def, 0.01)) * 0.6) / defHp;
+    const attSurvive = 1 - 0.6 / attHp;
     target.sailors = Math.floor(target.sailors * survive);
     target.soldiers = Math.floor(target.soldiers * survive);
-    ship.sailors = Math.floor(ship.sailors * 0.4);
-    ship.soldiers = Math.floor(ship.soldiers * 0.4);
+    ship.sailors = Math.floor(ship.sailors * attSurvive);
+    ship.soldiers = Math.floor(ship.soldiers * attSurvive);
     state.events.push({ type: 'boardingRepelled', shipId: target.id, attacker: ship.owner, defender: target.owner });
   }
 }
@@ -730,12 +789,56 @@ function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
 function removeSunkShips(state: GameState, ctx: TickContext): void {
   const survivors: Ship[] = [];
   for (const s of state.ships) {
-    if (s.hp > 0) survivors.push(s);
-    else if (!ctx.founded.has(s.id)) {
+    if (s.hp > 0) {
+      survivors.push(s);
+      continue;
+    }
+    const hero = heroOnShip(state, s.id);
+    if (hero) {
+      // Una nave coloniale che fonda una città porta il capitano a terra.
+      const founded = ctx.founded.get(s.id);
+      if (founded !== undefined) hero.location = { type: 'city', cityId: founded };
+      else loseHero(state, hero, 'shipwreck');
+    }
+    if (!ctx.founded.has(s.id)) {
       state.events.push({ type: 'shipSunk', shipId: s.id, name: s.name, owner: s.owner, by: ctx.sunkBy.get(s.id) ?? NEUTRAL, x: s.x, y: s.y });
     }
   }
   state.ships = survivors;
+}
+
+// ================================================================ capitano
+
+function loseHero(state: GameState, hero: Hero, reason: 'shipwreck' | 'captured' | 'cityLost'): void {
+  hero.location = { type: 'away', returnTick: state.tick + ticks(HERO.returnSeconds) };
+  state.events.push({ type: 'heroLost', owner: hero.owner, reason });
+}
+
+function gainXp(state: GameState, hero: Hero | undefined, xp: number): void {
+  if (!hero) return;
+  const before = heroLevel(hero);
+  hero.xp += xp;
+  const after = heroLevel(hero);
+  if (after > before) state.events.push({ type: 'heroLevelUp', owner: hero.owner, level: after });
+}
+
+function updateHeroes(state: GameState): void {
+  for (const hero of state.heroes) {
+    const loc = hero.location;
+    // Un capitano su una nave che non esiste più o non è più sua è disperso.
+    if (loc.type === 'ship') {
+      const ship = getShip(state, loc.shipId);
+      if (!ship || ship.owner !== hero.owner) loseHero(state, hero, 'shipwreck');
+    } else if (loc.type === 'city') {
+      if (getCity(state, loc.cityId)?.owner !== hero.owner) loseHero(state, hero, 'cityLost');
+    } else if (state.tick >= loc.returnTick) {
+      const home = state.cities.find((c) => c.owner === hero.owner);
+      if (home) {
+        hero.location = { type: 'city', cityId: home.id };
+        state.events.push({ type: 'heroReturned', owner: hero.owner, cityId: home.id });
+      }
+    }
+  }
 }
 
 function checkElimination(state: GameState): void {

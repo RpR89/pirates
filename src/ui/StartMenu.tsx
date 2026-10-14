@@ -1,13 +1,19 @@
 import { useState } from 'preact/hooks';
 import type { GameSetup } from '../game/controller';
 import { FACTIONS, FACTION_IDS, MAX_NAME_LENGTH, type FactionId } from '../sim/factions';
+import { generateHero } from '../sim/hero';
 import { Flag } from './common';
+import { HeroSheet } from './HeroCard';
+
+const randomSeed = () => Math.floor(Math.random() * 1e9) + 1;
 
 export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) {
   const [faction, setFaction] = useState<FactionId>('pirati');
   const [captain, setCaptain] = useState('');
   const [rivals, setRivals] = useState(2);
   const [seed, setSeed] = useState('');
+  const [heroSeed, setHeroSeed] = useState(randomSeed);
+  const hero = generateHero(heroSeed, faction, captain.trim() || 'Capitano');
 
   const start = () => {
     const parsed = Number(seed);
@@ -15,7 +21,8 @@ export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) 
       faction,
       captain: captain.trim() || 'Capitano',
       rivals,
-      seed: Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : Math.floor(Math.random() * 1e9) + 1,
+      seed: Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : randomSeed(),
+      hero,
     });
   };
 
@@ -44,11 +51,27 @@ export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) 
             })}
           </div>
 
+          <h2 style={{ marginTop: 16 }}>Il tuo capitano</h2>
+          <div class="row wrap" style={{ alignItems: 'flex-start', gap: 16 }}>
+            <div style={{ minWidth: 320, flex: 1 }}>
+              <HeroSheet hero={hero} faction={faction} />
+            </div>
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <label class="row">
+                <span>Nome</span>
+                <input class="grow" value={captain} maxLength={MAX_NAME_LENGTH} placeholder="Capitano" onInput={(e) => setCaptain((e.target as HTMLInputElement).value)} />
+              </label>
+              <div class="row mt">
+                <button onClick={() => setHeroSeed(randomSeed())}>Genera un altro capitano</button>
+              </div>
+              <div class="sub mt">
+                Imbarcato, il capitano potenzia la sua nave (navigazione, artiglieria, spada);
+                in città rafforza la difesa (comando). Cresce di livello in battaglia.
+              </div>
+            </div>
+          </div>
+
           <div class="row wrap mt" style={{ gap: 16, marginTop: 16 }}>
-            <label class="row">
-              <span>Nome del capitano</span>
-              <input value={captain} maxLength={MAX_NAME_LENGTH} placeholder="Capitano" onInput={(e) => setCaptain((e.target as HTMLInputElement).value)} />
-            </label>
             <label class="row">
               <span>Avversari</span>
               <select value={rivals} onChange={(e) => setRivals(Number((e.target as HTMLSelectElement).value))}>

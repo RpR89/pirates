@@ -1,7 +1,10 @@
 import { Tile, isWaterTile, tileAt, type TileMap } from '../sim/map';
 import { bayer, hash2, hex, mix, type RGB } from './color';
 
-export const TILE_PX = 16;
+export const TILE_PX = 24;
+/** Scala dei dettagli rispetto alle caselle da 16 px su cui sono stati tarati. */
+const K = TILE_PX / 16;
+const HALF = TILE_PX / 2;
 export const CHUNK_TILES = 32;
 
 // Codici di terreno a livello di pixel.
@@ -83,25 +86,27 @@ export function waterDistanceField(map: TileMap): Float32Array {
 
 /** Terreno del pixel globale (gx, gy), con coste e angoli arrotondati. */
 function pixelTerrain(map: TileMap, gx: number, gy: number): number {
-  const tx = gx >> 4;
-  const ty = gy >> 4;
-  const px = gx & 15;
-  const py = gy & 15;
+  const tx = Math.floor(gx / TILE_PX);
+  const ty = Math.floor(gy / TILE_PX);
+  const px = gx - tx * TILE_PX;
+  const py = gy - ty * TILE_PX;
   const t = tileAt(map, tx, ty);
   const water = isWaterTile(t);
-  const qx = px < 8 ? -1 : 1;
-  const qy = py < 8 ? -1 : 1;
+  const qx = px < HALF ? -1 : 1;
+  const qy = py < HALF ? -1 : 1;
   const ax = tileAt(map, tx + qx, ty);
   const ay = tileAt(map, tx, ty + qy);
-  const dx = Math.abs(px + 0.5 - 8);
-  const dy = Math.abs(py + 0.5 - 8);
-  const far = dx * dx + dy * dy > 64;
+  const dx = Math.abs(px + 0.5 - HALF);
+  const dy = Math.abs(py + 0.5 - HALF);
+  const far = dx * dx + dy * dy > HALF * HALF;
   if (!water && isWaterTile(ax) && isWaterTile(ay) && far) return WATER;
   if (water && !isWaterTile(ax) && !isWaterTile(ay) && far) return terrainOf(ax) === ROCK ? SAND : terrainOf(ax);
   if (water) return WATER;
   // Confini irregolari tra i tipi di terra.
   const j = hash2(gx >> 2, gy >> 2, 7);
-  const jt = tileAt(map, (gx + ((j % 7) - 3)) >> 4, (gy + (((j >> 3) % 7) - 3)) >> 4);
+  const jitter = Math.round(3 * K);
+  const span = jitter * 2 + 1;
+  const jt = tileAt(map, Math.floor((gx + ((j % span) - jitter)) / TILE_PX), Math.floor((gy + (((j >> 3) % span) - jitter)) / TILE_PX));
   return isWaterTile(jt) ? terrainOf(t) : terrainOf(jt);
 }
 
@@ -243,12 +248,13 @@ export function renderChunk(map: TileMap, field: Float32Array, chunkX: number, c
         const n = 1 + (h % 2);
         for (let k = 0; k < n; k++) {
           const hk = hash2(tx, ty, 30 + k);
-          trees.push({ x: tx * 16 + 4 + (hk % 9) - gx0, y: ty * 16 + 4 + ((hk >> 4) % 9) - gy0, r: 5 + ((hk >> 8) % 3), palm: false, seed: hk });
+          const spread = Math.round(9 * K);
+          trees.push({ x: tx * TILE_PX + Math.round(4 * K) + (hk % spread) - gx0, y: ty * TILE_PX + Math.round(4 * K) + ((hk >> 4) % spread) - gy0, r: Math.round((5 + ((hk >> 8) % 3)) * K), palm: false, seed: hk });
         }
       } else if (t === Tile.Grass && h % 9 === 0) {
-        trees.push({ x: tx * 16 + 8 + (h % 5) - 2 - gx0, y: ty * 16 + 8 + ((h >> 3) % 5) - 2 - gy0, r: 4 + (h % 2), palm: false, seed: h });
+        trees.push({ x: tx * TILE_PX + HALF + (h % 5) - 2 - gx0, y: ty * TILE_PX + HALF + ((h >> 3) % 5) - 2 - gy0, r: Math.round((4 + (h % 2)) * K), palm: false, seed: h });
       } else if (t === Tile.Sand && h % 7 === 0) {
-        trees.push({ x: tx * 16 + 8 - gx0, y: ty * 16 + 8 - gy0, r: 5, palm: true, seed: h });
+        trees.push({ x: tx * TILE_PX + HALF - gx0, y: ty * TILE_PX + HALF - gy0, r: Math.round(5 * K), palm: true, seed: h });
       }
     }
   }

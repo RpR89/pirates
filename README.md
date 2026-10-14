@@ -1,17 +1,35 @@
 # Pirates
 
 Strategia in tempo reale in pixel art, vista dall'alto, nei mari dei Caraibi.
-Scegli una bandiera (Fratellanza della Costa, Royal Navy, Marine Royale o Armada
-Española), fai crescere le tue città, arruola uomini, vara navi a cui dai un nome
-e conquista l'arcipelago. Single player contro l'IA, con l'architettura pronta
+Scegli una bandiera, genera il tuo capitano, fai crescere le tue città, arruola
+uomini, vara navi a cui dai un nome e conquista l'arcipelago. Single player contro l'IA, con l'architettura pronta
 per il multiplayer.
+
+## Fazioni
+
+| Fazione | Punto di forza |
+| --- | --- |
+| Fratellanza della Costa (pirati) | Arrembaggio +80%, corpo a corpo +40%, navi piccole più economiche; niente mura |
+| Royal Navy | Cannoni +40% e scafi +20%: domina lo scontro tra navi |
+| Marine Royale | Soldati con il 70% di PF in più: perdono molti meno uomini |
+| Armada Española | Produzione di oro +60% |
+
+## Il capitano
+
+All'inizio generi il tuo capitano (ritratto e abilità: navigazione, artiglieria,
+spada, comando) e puoi rigenerarlo finché ti piace. Imbarcato potenzia la sua nave
+(velocità, cannoni, arrembaggio); in città rafforza la guarnigione e le torri. Sale
+di livello affondando e catturando navi. Se la sua nave affonda naufraga e torna in
+una tua città dopo un minuto.
 
 ## Come si gioca
 
 - **Città.** Clicca sul municipio per il menu della città. Con *Costruisci* scegli
   un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città: case
   (abitanti), fattorie e pescherie (cibo), segheria (legno), mercato (oro),
-  cantiere navale, caserma, torri di difesa. Cantiere e pescheria vanno sulla costa.
+  cantiere navale, caserma, torri di difesa e mura (tranne i pirati: si tracciano
+  trascinando e rendono la guarnigione molto più forte). Cantiere e pescheria vanno
+  sulla costa.
 - **Popolazione e cibo.** Gli abitanti crescono se c'è cibo e posto nelle case,
   e pagano le tasse. Abitanti e uomini mangiano: in carestia la gente se ne va e
   gli uomini disertano. A 35 abitanti la città diventa *paese*, a 80 *città*:

@@ -2,12 +2,14 @@ import { useState } from 'preact/hooks';
 import type { GameController } from '../../game/controller';
 import { FACTIONS } from '../../sim/factions';
 import { BUILDINGS, CITY, CITY_TIERS, FOOD, TICK_RATE, ticks } from '../../sim/rules';
-import { cityProduction, garrisonStrength, militiaStrength, playerBalance } from '../../sim/simulation';
+import { cityProduction, defenseMultiplier, garrisonStrength, militiaStrength, playerBalance, wallsAlive } from '../../sim/simulation';
+import { heroCityBonus } from '../../sim/hero';
 import {
   NEUTRAL,
   cityBuildings,
   cityTier,
   getCity,
+  heroInCity,
   housing,
   recruitable,
   tierName,
@@ -124,6 +126,12 @@ function CityOverview({ ctl, city }: { ctl: GameController; city: City }) {
         Bilancio cibo di tutto il regno: {rate(balance.food)}{balance.food < 0 ? ' — servono fattorie o pescherie!' : ''}
       </div>
 
+      {heroInCity(state, city.id) && (
+        <div class="card mt gold">★ Il capitano {heroInCity(state, city.id)!.name} è qui: difesa della guarnigione {`+${Math.round((heroCityBonus(heroInCity(state, city.id)!).defense - 1) * 100)}%`}.</div>
+      )}
+      {wallsAlive(state, city) > 0 && (
+        <div class="sub mt">Mura: {wallsAlive(state, city)} tratti, guarnigione +{Math.round((defenseMultiplier(state, city) / (heroInCity(state, city.id) ? heroCityBonus(heroInCity(state, city.id)!).defense : 1) - 1) * 100)}% negli assedi.</div>
+      )}
       {city.siege && (
         <div class="card bad mt">
           Assedio! {Math.ceil(city.siege.soldiers)} soldati di {state.players[city.siege.owner].name} contro la guarnigione.
