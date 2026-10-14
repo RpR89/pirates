@@ -1,10 +1,12 @@
 import Phaser from 'phaser';
 import type { GameController } from '../game/controller';
 import type { Keyboard } from '../game/keyboard';
-import { drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
+import { WALL_DIRS, drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
 import { toNumber } from '../render/color';
 import { drawShip } from '../render/shipArt';
-import { CHUNK_TILES, TILE_PX, renderChunk, waterDistanceField } from '../render/terrain';
+import { TILE_PX } from '../render/terrain';
+import { TerrainStreamer } from '../render/terrainStreamer';
+import { SiegeLayer } from './SiegeLayer';
 import { FACTIONS } from '../sim/factions';
 import { isLand, type Point } from '../sim/map';
 import { BUILDINGS, CITY, SHIPS, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
@@ -48,12 +50,17 @@ export interface WorldSceneData {
 }
 
 const lookId = (state: GameState, owner: PlayerId) => state.players[owner]?.faction ?? 'neutral';
+/** Scala delle misure in pixel della scena (tarate a 24 px per casella). */
+const S = TILE_PX / 24;
+/** Livelli di zoom: da lontano (anteprima) fino al dettaglio 1:1. */
+const ZOOMS = [0.2, 0.3, 0.4, 0.5, 0.65, 0.8, 1];
+const shipLength = (s: Ship) => SHIPS[s.cls].length * TILE_PX;
 
 export class WorldScene extends Phaser.Scene {
   private ctl!: GameController;
   private keyboard!: Keyboard;
-  private field!: Float32Array;
-  private chunksTodo: { x: number; y: number }[] = [];
+  private terrain!: TerrainStreamer;
+  private siege!: SiegeLayer;
   private ships = new Map<number, ShipVisual>();
   private buildings = new Map<number, BuildingVisual>();
   private overlay!: Phaser.GameObjects.Graphics;
@@ -84,57 +91,33 @@ export class WorldScene extends Phaser.Scene {
 
   create(): void {
     const { map } = this.state;
-    this.field = waterDistanceField(map);
+    this.terrain = new TerrainStreamer(this, map, this.state.seed);
+    this.siege = new SiegeLayer(this, () => this.state);
+    this.events.once('shutdown', () => this.terrain.destroy());
+    this.events.once('destroy', () => this.terrain.destroy());
     this.ships.clear();
     this.buildings.clear();
     this.lastTick = -1;
-
-    const chunksX = Math.ceil(map.width / CHUNK_TILES);
-    const chunksY = Math.ceil(map.height / CHUNK_TILES);
-    for (let y = 0; y < chunksY; y++) for (let x = 0; x < chunksX; x++) this.chunksTodo.push({ x, y });
 
     this.overlay = this.add.graphics().setDepth(80);
     this.ghost = this.add.image(0, 0, '__DEFAULT').setOrigin(0, 0).setDepth(85).setVisible(false);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, map.width * TILE_PX, map.height * TILE_PX);
-    cam.setZoom(2);
-    cam.setRoundPixels(true);
+    cam.setZoom(0.5);
     cam.setBackgroundColor('#1f4f80');
     this.ctl.centerOn = (p) => cam.centerOn(p.x * TILE_PX, p.y * TILE_PX);
     const home = this.state.cities.find((c) => c.owner === this.ctl.me);
     if (home) this.ctl.centerOn({ x: home.cx + 0.5, y: home.cy + 2 });
-
-    // I blocchi vicini alla visuale per primi, così la partita è subito giocabile.
-    this.sortChunks();
-    for (let i = 0; i < 6; i++) this.buildNextChunk();
 
     this.setupInput();
   }
 
   // ------------------------------------------------------------ texture
 
-  private sortChunks(): void {
-    const view = this.cameras.main.worldView;
-    const cx = (view.centerX || 0) / (TILE_PX * CHUNK_TILES);
-    const cy = (view.centerY || 0) / (TILE_PX * CHUNK_TILES);
-    this.chunksTodo.sort((a, b) => Math.hypot(a.x + 0.5 - cx, a.y + 0.5 - cy) - Math.hypot(b.x + 0.5 - cx, b.y + 0.5 - cy));
-  }
-
-  private buildNextChunk(): void {
-    const next = this.chunksTodo.shift();
-    if (!next) return;
-    const chunk = renderChunk(this.state.map, this.field, next.x, next.y);
-    const key = `terrain-${this.state.seed}-${next.x}-${next.y}`;
-    if (!this.textures.exists(key)) {
-      const canvas = document.createElement('canvas');
-      canvas.width = chunk.width;
-      canvas.height = chunk.height;
-      canvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(chunk.data), chunk.width, chunk.height), 0, 0);
-      this.textures.addCanvas(key, canvas);
-    }
-    const size = CHUNK_TILES * TILE_PX;
-    this.add.image(next.x * size, next.y * size, key).setOrigin(0, 0).setDepth(0);
+  /** Spessore delle linee in unità del mondo: costante a schermo a ogni zoom. */
+  private lw(): number {
+    return 1.5 / this.cameras.main.zoom;
   }
 
   private shipTexture(cls: ShipClass, owner: PlayerId): string {
@@ -154,13 +137,22 @@ export class WorldScene extends Phaser.Scene {
     return this.kindTexture(b.kind, buildingOwner(this.state, b), b.kind === 'mura' ? this.wallMask(b) : 0);
   }
 
-  /** Giunzioni di un tratto di mura: si collega a mura e torri vicine (1 N, 2 E, 4 S, 8 O). */
+  /**
+   * Giunzioni di un tratto di mura in 8 direzioni (bit come WALL_DIRS). Una giunzione
+   * diagonale si usa solo se nessuno dei due lati dritti accanto è già collegato.
+   */
   private wallMask(b: Building): number {
-    const joins = (x: number, y: number) => {
-      const other = buildingAtTile(this.state, x, y);
+    const joins = (dx: number, dy: number) => {
+      const other = buildingAtTile(this.state, b.x + dx, b.y + dy);
       return !!other && other.cityId === b.cityId && (other.kind === 'mura' || other.kind === 'torre');
     };
-    return (joins(b.x, b.y - 1) ? 1 : 0) | (joins(b.x + 1, b.y) ? 2 : 0) | (joins(b.x, b.y + 1) ? 4 : 0) | (joins(b.x - 1, b.y) ? 8 : 0);
+    let mask = 0;
+    WALL_DIRS.forEach(([dx, dy], i) => {
+      if (!joins(dx, dy)) return;
+      if (dx !== 0 && dy !== 0 && (joins(dx, 0) || joins(0, dy))) return;
+      mask |= 1 << i;
+    });
+    return mask;
   }
 
   private kindTexture(kind: BuildingKind, owner: PlayerId, mask = 0): string {
@@ -235,7 +227,8 @@ export class WorldScene extends Phaser.Scene {
     this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       const cam = this.cameras.main;
       const before = cam.getWorldPoint(p.x, p.y);
-      cam.setZoom(Phaser.Math.Clamp(cam.zoom + (dy > 0 ? -1 : 1), 1, 4));
+      const i = ZOOMS.findIndex((z) => z >= cam.zoom - 0.001);
+      cam.setZoom(ZOOMS[Phaser.Math.Clamp((i < 0 ? ZOOMS.length - 1 : i) + (dy > 0 ? -1 : 1), 0, ZOOMS.length - 1)]);
       cam.preRender();
       const after = cam.getWorldPoint(p.x, p.y);
       cam.scrollX += before.x - after.x;
@@ -249,7 +242,7 @@ export class WorldScene extends Phaser.Scene {
     for (const s of this.state.ships) {
       const v = this.ships.get(s.id);
       if (!v) continue;
-      const reach = Math.max(8, SHIPS[s.cls].length * 0.45);
+      const reach = Math.max(TILE_PX * 0.4, shipLength(s) * 0.45);
       const d = Math.hypot(v.sprite.x - wx, v.sprite.y - wy);
       if (d < reach && d < bestD) {
         best = s;
@@ -370,8 +363,8 @@ export class WorldScene extends Phaser.Scene {
 
   private marker(x: number, y: number, tint: number): void {
     const g = this.add.graphics().setDepth(90);
-    g.lineStyle(1, tint, 1);
-    g.strokeCircle(0, 0, 4);
+    g.lineStyle(this.lw(), tint, 1);
+    g.strokeCircle(0, 0, 4 * S);
     g.setPosition(x, y);
     this.tweens.add({ targets: g, scale: 2.2, alpha: 0, duration: 500, onComplete: () => g.destroy() });
   }
@@ -380,16 +373,15 @@ export class WorldScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     this.panCamera(delta);
-    if (this.chunksTodo.length) {
-      this.sortChunks();
-      this.buildNextChunk();
-    }
+    this.terrain.update(this.cameras.main);
     this.ctl.session.advance(delta);
     const events = this.ctl.session.drainEvents();
     this.ctl.cleanSelection();
     this.syncBuildings(time);
     this.syncShips(time);
     this.playEvents(events);
+    this.siege.handleEvents(events);
+    this.siege.update(time, delta, (x, y, c, n, spread) => this.puff(x, y, c, n, spread));
     if (events.length) this.ctl.handleEvents(events);
     this.drawOverlay();
     this.updateGhost();
@@ -401,7 +393,7 @@ export class WorldScene extends Phaser.Scene {
   private panCamera(delta: number): void {
     const k = this.keyboard;
     const cam = this.cameras.main;
-    const speed = (500 / cam.zoom) * (delta / 1000);
+    const speed = (700 / cam.zoom) * (delta / 1000);
     if (k.isDown('arrowleft', 'a')) cam.scrollX -= speed;
     if (k.isDown('arrowright', 'd')) cam.scrollX += speed;
     if (k.isDown('arrowup', 'w')) cam.scrollY -= speed;
@@ -480,12 +472,12 @@ export class WorldScene extends Phaser.Scene {
       }
       const rot = vis.angle + Math.PI / 2;
       const bob = Math.sin((time + s.id * 500) / 700) * 0.04;
-      vis.sprite.setPosition(Math.round(x), Math.round(y)).setRotation(rot + bob);
-      vis.shadow.setPosition(Math.round(x) + 2, Math.round(y) + 3).setRotation(rot + bob);
+      vis.sprite.setPosition(x, y).setRotation(rot + bob);
+      vis.shadow.setPosition(x + 2 * S, y + 3 * S).setRotation(rot + bob);
 
       if (moving && time > vis.wakeAt) {
         vis.wakeAt = time + 90;
-        const back = SHIPS[s.cls].length / 2;
+        const back = shipLength(s) / 2;
         this.wake(x - Math.cos(vis.angle) * back, y - Math.sin(vis.angle) * back, vis.angle);
       }
     }
@@ -502,13 +494,13 @@ export class WorldScene extends Phaser.Scene {
 
   private wake(x: number, y: number, angle: number): void {
     for (const side of [-1, 1]) {
-      const px = x + Math.cos(angle + Math.PI / 2) * side * 2;
-      const py = y + Math.sin(angle + Math.PI / 2) * side * 2;
-      const p = this.add.rectangle(px, py, 1, 1, 0xeefaf6, 0.8).setDepth(18);
+      const px = x + Math.cos(angle + Math.PI / 2) * side * 2 * S;
+      const py = y + Math.sin(angle + Math.PI / 2) * side * 2 * S;
+      const p = this.add.rectangle(px, py, S * 1.2, S * 1.2, 0xeefaf6, 0.8).setDepth(18);
       this.tweens.add({
         targets: p,
-        x: px + Math.cos(angle + Math.PI / 2) * side * 4,
-        y: py + Math.sin(angle + Math.PI / 2) * side * 4,
+        x: px + Math.cos(angle + Math.PI / 2) * side * 4 * S,
+        y: py + Math.sin(angle + Math.PI / 2) * side * 4 * S,
         alpha: 0,
         duration: 900,
         onComplete: () => p.destroy(),
@@ -517,26 +509,27 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private smoke(x: number, y: number): void {
-    const p = this.add.circle(x, y, 2 + Math.random() * 2, 0x55524c, 0.6).setDepth(60);
-    this.tweens.add({ targets: p, y: y - 14, x: x + 5, alpha: 0, scale: 2, duration: 1600, onComplete: () => p.destroy() });
+    const p = this.add.circle(x, y, (2 + Math.random() * 2) * S, 0x55524c, 0.6).setDepth(60);
+    this.tweens.add({ targets: p, y: y - 14 * S, x: x + 5 * S, alpha: 0, scale: 2, duration: 1600, onComplete: () => p.destroy() });
   }
 
   private puff(x: number, y: number, color: number, count: number, spread = 6): void {
     for (let i = 0; i < count; i++) {
       const a = (Math.PI * 2 * i) / count + Math.random();
-      const d = spread * (0.5 + Math.random());
-      const p = this.add.rectangle(x, y, 2, 2, color).setDepth(70);
+      const d = spread * S * (0.5 + Math.random());
+      const p = this.add.rectangle(x, y, 2 * S, 2 * S, color).setDepth(70);
       this.tweens.add({ targets: p, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, duration: 350 + Math.random() * 350, onComplete: () => p.destroy() });
     }
   }
 
   private floatText(x: number, y: number, text: string, color: string): void {
     const t = this.add
-      .text(Math.round(x), Math.round(y), text, { fontFamily: '"Pixelify Sans"', fontSize: '10px', color, stroke: '#1b1712', strokeThickness: 3 })
+      .text(Math.round(x), Math.round(y), text, { fontFamily: '"Pixelify Sans"', fontSize: '16px', color, stroke: '#1b1712', strokeThickness: 4 })
       .setOrigin(0.5)
       .setDepth(95)
-      .setResolution(4);
-    this.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
+      .setScale(1 / this.cameras.main.zoom)
+      .setResolution(2);
+    this.tweens.add({ targets: t, y: y - 16 * S, alpha: 0, duration: 1800, onComplete: () => t.destroy() });
   }
 
   private playEvents(events: GameEvent[]): void {
@@ -545,10 +538,10 @@ export class WorldScene extends Phaser.Scene {
         case 'shot': {
           const fx = e.from.x * TILE_PX;
           const fy = e.from.y * TILE_PX;
-          const tx = e.to.x * TILE_PX + (Math.random() - 0.5) * 6;
-          const ty = e.to.y * TILE_PX + (Math.random() - 0.5) * 6;
+          const tx = e.to.x * TILE_PX + (Math.random() - 0.5) * 6 * S;
+          const ty = e.to.y * TILE_PX + (Math.random() - 0.5) * 6 * S;
           this.puff(fx, fy, 0xf2efe6, 4, 4);
-          const ball = this.add.circle(fx, fy, 1.2, 0x1b1712).setDepth(75);
+          const ball = this.add.circle(fx, fy, 1.2 * S, 0x1b1712).setDepth(75);
           this.tweens.add({
             targets: ball, x: tx, y: ty, duration: 260,
             onComplete: () => {
@@ -565,7 +558,7 @@ export class WorldScene extends Phaser.Scene {
           break;
         case 'shipCaptured': {
           const v = this.ships.get(e.shipId);
-          if (v) this.floatText(v.sprite.x, v.sprite.y - 18, 'Arrembaggio!', '#ffcd75');
+          if (v) this.floatText(v.sprite.x, v.sprite.y - 18 * S, 'Arrembaggio!', '#ffcd75');
           break;
         }
         case 'buildingDestroyed':
@@ -575,7 +568,7 @@ export class WorldScene extends Phaser.Scene {
         case 'cityCaptured':
         case 'cityFounded': {
           const city = getCity(this.state, e.cityId);
-          if (city) this.floatText((city.cx + 0.5) * TILE_PX, city.cy * TILE_PX - 20, e.type === 'cityFounded' ? 'Fondata!' : 'Conquistata!', '#ffcd75');
+          if (city) this.floatText((city.cx + 0.5) * TILE_PX, city.cy * TILE_PX - 20 * S, e.type === 'cityFounded' ? 'Fondata!' : 'Conquistata!', '#ffcd75');
           break;
         }
       }
@@ -588,15 +581,15 @@ export class WorldScene extends Phaser.Scene {
     let t = this.labels[this.labelIndex];
     if (!t) {
       t = this.add
-        .text(0, 0, '', { fontFamily: '"Pixelify Sans"', fontSize: '10px', color, stroke: '#1b1712', strokeThickness: 3 })
+        .text(0, 0, '', { fontFamily: '"Pixelify Sans"', fontSize: '15px', color, stroke: '#1b1712', strokeThickness: 4 })
         .setOrigin(0.5, 1)
         .setDepth(96)
-        .setResolution(4);
+        .setResolution(2);
       this.labels.push(t);
     }
     this.labelIndex++;
     const zoom = this.cameras.main.zoom;
-    t.setText(text).setColor(color).setPosition(Math.round(x), Math.round(y)).setScale(2 / zoom).setVisible(true);
+    t.setText(text).setColor(color).setPosition(x, y).setScale(1 / zoom).setVisible(true);
   }
 
   private drawOverlay(): void {
@@ -615,16 +608,16 @@ export class WorldScene extends Phaser.Scene {
       const max = shipMaxHp(state, s);
       const isSel = selectedShips.has(s.id);
       const color = toNumber(FACTION_COLOR(state, s.owner));
-      const len = SHIPS[s.cls].length;
+      const len = shipLength(s);
       if (isSel) {
-        g.lineStyle(1, color, 1);
+        g.lineStyle(this.lw(), color, 1);
         g.strokeCircle(v.sprite.x, v.sprite.y, len * 0.6);
         if (s.owner === me) this.orderLine(g, s, v.sprite.x, v.sprite.y);
       }
       if (isSel || s.hp < max || this.hoverShip === s.id) {
-        this.hpBar(g, v.sprite.x, v.sprite.y - len * 0.6 - 4, 18, s.hp / max);
+        this.hpBar(g, v.sprite.x, v.sprite.y - len * 0.6 - 4 * S, 18 * S, s.hp / max);
       }
-      if (isSel || this.hoverShip === s.id) this.label(v.sprite.x, v.sprite.y - len * 0.6 - 6, s.name, s.owner === me ? '#f1e3c2' : '#ffb59e');
+      if (isSel || this.hoverShip === s.id) this.label(v.sprite.x, v.sprite.y - len * 0.6 - 8 * S, s.name, s.owner === me ? '#f1e3c2' : '#ffb59e');
     }
 
     const selBuilding = this.ctl.selectedBuilding();
@@ -633,14 +626,14 @@ export class WorldScene extends Phaser.Scene {
       const x = b.x * TILE_PX;
       const y = b.y * TILE_PX;
       if (selBuilding?.id === b.id) {
-        g.lineStyle(1, 0xffffff, 1);
+        g.lineStyle(this.lw(), 0xffffff, 1);
         this.brackets(g, x - 1, y - 1, s.w * TILE_PX + 2, s.h * TILE_PX + 2);
       }
       if (b.buildLeft > 0) {
         const total = ticks(s.buildSeconds);
-        this.bar(g, x + s.w * TILE_PX / 2, y - 3, s.w * TILE_PX - 4, 1 - b.buildLeft / total, 0xe3b23c);
+        this.bar(g, x + s.w * TILE_PX / 2, y - 3 * S, s.w * TILE_PX - 4 * S, 1 - b.buildLeft / total, 0xe3b23c);
       } else if (b.hp < s.hp) {
-        this.hpBar(g, x + s.w * TILE_PX / 2, y - buildingOverhang(b.kind) - 3, Math.min(30, s.w * TILE_PX), b.hp / s.hp);
+        this.hpBar(g, x + s.w * TILE_PX / 2, y - buildingOverhang(b.kind) - 3 * S, Math.min(30 * S, s.w * TILE_PX), b.hp / s.hp);
       }
     }
 
@@ -651,14 +644,14 @@ export class WorldScene extends Phaser.Scene {
       if (loc.type === 'ship') {
         const v = this.ships.get(loc.shipId);
         const ship = state.ships.find((x) => x.id === loc.shipId);
-        if (v && ship) at = { x: v.sprite.x, y: v.sprite.y - SHIPS[ship.cls].length * 0.6 - 12 };
+        if (v && ship) at = { x: v.sprite.x, y: v.sprite.y - shipLength(ship) * 0.6 - 12 * S };
       } else if (loc.type === 'city') {
         const c = getCity(state, loc.cityId);
-        if (c) at = { x: (c.cx + 0.5) * TILE_PX + TILE_PX * 1.2, y: (c.cy - 1) * TILE_PX - 18 };
+        if (c) at = { x: (c.cx + 0.5) * TILE_PX + TILE_PX * 1.2, y: (c.cy - 1) * TILE_PX - 18 * S };
       }
       if (!at) continue;
       this.star(g, at.x, at.y, hero.owner === me ? 0xffd54a : 0xff8a6a);
-      if (hero.owner === me && loc.type === 'ship') this.label(at.x, at.y - 5, hero.name, '#ffe7a3');
+      if (hero.owner === me && loc.type === 'ship') this.label(at.x, at.y - 6 * S, hero.name, '#ffe7a3');
     }
 
     // Città: nome, territorio della città selezionata e assedi.
@@ -668,25 +661,21 @@ export class WorldScene extends Phaser.Scene {
       const px = (c.cx + 0.5) * TILE_PX;
       const py = (c.cy + 0.5) * TILE_PX;
       if (c === focus || c === placing) {
-        g.lineStyle(1, 0xf1e3c2, 0.45);
+        g.lineStyle(this.lw(), 0xf1e3c2, 0.45);
         g.strokeCircle(px, py, CITY.radius * TILE_PX);
       }
-      this.label(px, (c.cy - 1) * TILE_PX - 14, c.name, c.owner === me ? '#ffe7a3' : c.owner === NEUTRAL ? '#d8d2c0' : '#ffb59e');
+      this.label(px, (c.cy - 1) * TILE_PX - 14 * S, c.name, c.owner === me ? '#ffe7a3' : c.owner === NEUTRAL ? '#d8d2c0' : '#ffb59e');
       if (c.siege) {
         const attacker = state.players[c.siege.owner];
         const def = Math.ceil(c.garrison.soldiers + c.garrison.sailors);
-        this.label(px, (c.cy + 2) * TILE_PX + 12, `Assedio: ${Math.ceil(c.siege.soldiers)} ${attacker?.name ?? ''} contro ${def}`, '#ff8a6a');
-        if (Math.random() < 0.3) {
-          const a = Math.random() * Math.PI * 2;
-          this.puff(px + Math.cos(a) * 26, py + Math.sin(a) * 26, 0xf2efe6, 2, 3);
-        }
+        this.label(px, (c.cy + 2) * TILE_PX + 12 * S, `Assedio: ${Math.ceil(c.siege.soldiers)} ${attacker?.name ?? ''} contro ${def}`, '#ff8a6a');
       }
     }
 
     if (this.dragStart && this.dragEnd) {
       const a = this.dragStart.world;
       const b = this.dragEnd;
-      g.lineStyle(1, 0xffffff, 0.9);
+      g.lineStyle(this.lw(), 0xffffff, 0.9);
       g.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     }
 
@@ -694,24 +683,27 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Caselle di una linea a 4 connessioni (i tratti di mura restano uniti). */
+  /** Caselle di una linea (anche in diagonale): le mura seguono il trascinamento. */
   private wallLine(a: Point, b: Point): Point[] {
-    const out: Point[] = [{ ...a }];
+    const out: Point[] = [];
     const dx = Math.abs(b.x - a.x);
-    const dy = Math.abs(b.y - a.y);
+    const dy = -Math.abs(b.y - a.y);
     const sx = Math.sign(b.x - a.x);
     const sy = Math.sign(b.y - a.y);
+    let err = dx + dy;
     let { x, y } = a;
-    let ix = 0;
-    let iy = 0;
-    for (let i = 0; i < Math.min(dx + dy, 60); i++) {
-      if ((0.5 + ix) / dx < (0.5 + iy) / dy) {
-        x += sx;
-        ix++;
-      } else {
-        y += sy;
-        iy++;
-      }
+    for (;;) {
       out.push({ x, y });
+      if ((x === b.x && y === b.y) || out.length >= 60) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y += sy;
+      }
     }
     return out;
   }
@@ -744,7 +736,7 @@ export class WorldScene extends Phaser.Scene {
         const ok = !placementProblem(this.state, this.ctl.me, mode.cityId, 'mura', t.x, t.y) && budget.gold >= cost.gold && budget.wood >= cost.wood;
         if (ok) budget = { gold: budget.gold - cost.gold, wood: budget.wood - cost.wood };
         g.fillStyle(ok ? 0x7dff7d : 0xff5a4a, 0.35).fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
-        g.lineStyle(1, ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
+        g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
       }
       return;
     }
@@ -759,7 +751,7 @@ export class WorldScene extends Phaser.Scene {
       .setTint(ok ? 0xa8ffa8 : 0xff8080)
       .setVisible(true);
     const g = this.overlay;
-    g.lineStyle(1, ok ? 0x7dff7d : 0xff5a4a, 1);
+    g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 1);
     g.strokeRect(at.x * TILE_PX, at.y * TILE_PX, s.w * TILE_PX, s.h * TILE_PX);
   }
 
@@ -786,25 +778,25 @@ export class WorldScene extends Phaser.Scene {
       c = o.type === 'found' ? 0xffcd75 : 0xffffff;
     }
     if (!to) return;
-    g.lineStyle(1, c, 0.4);
+    g.lineStyle(this.lw(), c, 0.4);
     g.lineBetween(x, y, to.x, to.y);
     g.fillStyle(c, 0.8);
-    g.fillCircle(to.x, to.y, 1.5);
+    g.fillCircle(to.x, to.y, 1.5 * S);
   }
 
   private star(g: Phaser.GameObjects.Graphics, x: number, y: number, color: number): void {
     const pts: Phaser.Math.Vector2[] = [];
     for (let i = 0; i < 10; i++) {
-      const r = i % 2 ? 2.2 : 5;
+      const r = (i % 2 ? 2.2 : 5) * S;
       const a = -Math.PI / 2 + (i * Math.PI) / 5;
       pts.push(new Phaser.Math.Vector2(x + Math.cos(a) * r, y + Math.sin(a) * r));
     }
-    g.fillStyle(0x1b1712, 1).fillCircle(x, y, 6);
+    g.fillStyle(0x1b1712, 1).fillCircle(x, y, 6 * S);
     g.fillStyle(color, 1).fillPoints(pts, true);
   }
 
   private brackets(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number): void {
-    const l = 4;
+    const l = 4 * S;
     g.lineBetween(x, y, x + l, y);
     g.lineBetween(x, y, x, y + l);
     g.lineBetween(x + w, y, x + w - l, y);
@@ -817,9 +809,10 @@ export class WorldScene extends Phaser.Scene {
 
   private bar(g: Phaser.GameObjects.Graphics, cx: number, y: number, w: number, ratio: number, color: number): void {
     const x = Math.round(cx - w / 2);
-    g.fillStyle(0x1b1712, 1).fillRect(x - 1, Math.round(y) - 1, w + 2, 4);
-    g.fillStyle(0x3a3328, 1).fillRect(x, Math.round(y), w, 2);
-    g.fillStyle(color, 1).fillRect(x, Math.round(y), Math.max(0, Math.round(w * Math.min(1, ratio))), 2);
+    const h = 2 * S;
+    g.fillStyle(0x1b1712, 1).fillRect(x - S, y - S, w + 2 * S, h + 2 * S);
+    g.fillStyle(0x3a3328, 1).fillRect(x, y, w, h);
+    g.fillStyle(color, 1).fillRect(x, y, Math.max(0, w * Math.min(1, ratio)), h);
   }
 
   private hpBar(g: Phaser.GameObjects.Graphics, cx: number, y: number, w: number, ratio: number): void {

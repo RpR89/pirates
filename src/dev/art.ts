@@ -38,7 +38,7 @@ if (params.has('terrain')) {
       c.width = chunk.width;
       c.height = chunk.height;
       c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(chunk.data), chunk.width, chunk.height), 0, 0);
-      c.style.width = `${chunk.width * 2}px`;
+      c.style.width = `${chunk.width}px`;
       c.style.margin = '0';
       document.body.append(c);
     }
@@ -48,13 +48,13 @@ if (params.has('terrain')) {
 } else {
   for (const look of looks) {
     title(look.name);
-    for (const cls of SHIP_CLASSES) show(drawShip(cls, look.colors));
-    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => k !== 'mura')) show(drawBuilding(kind, look.colors), scale - 1);
+    for (const cls of SHIP_CLASSES) show(drawShip(cls, look.colors), 1);
+    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => k !== 'mura')) show(drawBuilding(kind, look.colors), 1);
   }
   title('Mura (tutte le giunzioni)');
-  for (let mask = 0; mask < 16; mask++) show(drawBuilding('mura', FACTIONS.spagnoli.colors, mask), scale - 1);
+  for (const mask of [0, 1, 4, 5, 68, 17, 2 | 64, 1 | 4 | 64, 8 | 128, 2 | 32, 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128, 4 | 64 | 2]) show(drawBuilding('mura', FACTIONS.spagnoli.colors, mask), 1);
   title('Capitani');
-  for (const id of FACTION_IDS) for (let seed = 1; seed <= 4; seed++) show(drawPortrait(seed * 7919 + id.length, id), 2);
+  for (const id of FACTION_IDS) for (let uni = 0; uni < 3; uni++) for (let seed = 1; seed <= 2; seed++) show(drawPortrait(seed * 7919 + id.length + uni, id, uni), 1.5);
   title('In costruzione');
-  for (const size of [1, 2, 3]) show(drawConstruction(size, size), scale - 1);
+  for (const size of [1, 2, 3]) show(drawConstruction(size, size), 1);
 }

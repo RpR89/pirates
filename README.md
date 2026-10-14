@@ -17,7 +17,9 @@ per il multiplayer.
 ## Il capitano
 
 All'inizio generi il tuo capitano (ritratto e abilità: navigazione, artiglieria,
-spada, comando) e puoi rigenerarlo finché ti piace. Imbarcato potenzia la sua nave
+spada, comando) e puoi rigenerarlo finché ti piace, scegliendo anche la divisa
+(tre per nazione: dal capitano di vascello all'ammiraglio, o il corsaro, il
+filibustiere e il gentiluomo di ventura per i pirati). Imbarcato potenzia la sua nave
 (velocità, cannoni, arrembaggio); in città rafforza la guarnigione e le torri. Sale
 di livello affondando e catturando navi. Se la sua nave affonda naufraga e torna in
 una tua città dopo un minuto.
@@ -28,8 +30,8 @@ una tua città dopo un minuto.
   un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città: case
   (abitanti), fattorie e pescherie (cibo), segheria (legno), mercato (oro),
   cantiere navale, caserma, torri di difesa e mura (tranne i pirati: si tracciano
-  trascinando e rendono la guarnigione molto più forte). Cantiere e pescheria vanno
-  sulla costa.
+  trascinando, anche in diagonale, e rendono la guarnigione molto più forte).
+  Cantiere e pescheria vanno sulla costa.
 - **Popolazione e cibo.** Gli abitanti crescono se c'è cibo e posto nelle case,
   e pagano le tasse. Abitanti e uomini mangiano: in carestia la gente se ne va e
   gli uomini disertano. A 35 abitanti la città diventa *paese*, a 80 *città*:
@@ -42,13 +44,15 @@ una tua città dopo un minuto.
   In porto imbarchi e sbarchi gli uomini.
 - **Guerra.** Clic destro per attaccare a cannonate. Con l'arrembaggio (`B`)
   catturi le navi, se i tuoi uomini sono più forti. Bombarda le torri e sbarca le
-  truppe (`L`) per conquistare le città. La nave coloniale fonda nuove città.
+  truppe (`L`) per conquistare le città: le scialuppe portano gli uomini a riva e
+  la battaglia con la guarnigione si vede sulla mappa. La nave coloniale fonda
+  nuove città.
 
 | Comando | Azione |
 | --- | --- |
 | Clic sinistro / trascina | Seleziona navi ed edifici |
 | Clic destro | Muovi, attacca, bombarda, fonda |
-| `WASD` / frecce, rotella, tasto centrale | Scorri, zoom, trascina la mappa |
+| `WASD` / frecce, rotella, tasto centrale | Scorri, zoom (da tutta la mappa al dettaglio 1:1), trascina la mappa |
 | `B` / `L` / `X` | Arrembaggio / sbarco / ferma |
 | `H` / `P` / `Esc` | Città / pausa / annulla |
 

@@ -20,8 +20,9 @@ async function launch(setup: GameSetup): Promise<Running> {
     type: Phaser.AUTO,
     parent: 'game',
     backgroundColor: '#10263f',
-    pixelArt: true,
-    roundPixels: true,
+    // Grafica a 72 px per casella vista quasi sempre rimpicciolita: filtro lineare.
+    pixelArt: false,
+    antialias: true,
     disableContextMenu: true,
     scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight },
   });

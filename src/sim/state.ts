@@ -104,7 +104,7 @@ export type GameEvent =
   | { type: 'recruited'; cityId: number; owner: PlayerId; unit: UnitKind; count: number }
   | { type: 'buildingDone'; buildingId: number; owner: PlayerId; kind: BuildingKind }
   | { type: 'buildingDestroyed'; buildingId: number; owner: PlayerId; kind: BuildingKind; x: number; y: number }
-  | { type: 'troopsLanded'; cityId: number; owner: PlayerId; defender: PlayerId; soldiers: number }
+  | { type: 'troopsLanded'; cityId: number; owner: PlayerId; defender: PlayerId; soldiers: number; from: Point }
   | { type: 'assaultFailed'; cityId: number; attacker: PlayerId; defender: PlayerId }
   | { type: 'cityCaptured'; cityId: number; from: PlayerId; to: PlayerId }
   | { type: 'cityFounded'; cityId: number; owner: PlayerId }
@@ -495,7 +495,7 @@ export function createGame(seed: number, setups: PlayerSetup[], options: GameOpt
   if (setups.length < 1 || setups.length > START_ANCHORS.length) {
     throw new Error(`Numero di giocatori non supportato: ${setups.length}`);
   }
-  const map = generateMap(seed, options.width ?? 200, options.height ?? 150);
+  const map = generateMap(seed, options.width ?? 280, options.height ?? 210);
   const rng = mulberry32(seed ^ 0x9e3779b9);
   const newPlayer = (id: PlayerId, name: string, faction: FactionId | null): Player => ({
     id, name, faction,
@@ -542,7 +542,7 @@ export function createGame(seed: number, setups: PlayerSetup[], options: GameOpt
     state.heroes.push({ ...profile, skills: { ...profile.skills }, owner, xp: 0, location: { type: 'city', cityId: city.id } });
   });
 
-  const neutralCount = options.neutralCities ?? 8;
+  const neutralCount = options.neutralCities ?? 10;
   for (const p of shuffle([...candidates], rng)) {
     if (state.cities.length >= setups.length + neutralCount) break;
     if (!valid(p) || state.cities.some((c) => distance(p, { x: c.cx, y: c.cy }) < CITY.minDistance * 1.3)) continue;
@@ -566,7 +566,7 @@ function findPlacementForNewCity(state: GameState, p: Point): boolean {
       if (distance({ x: x + 0.5, y: y + 0.5 }, { x: p.x + 0.5, y: p.y + 0.5 }) <= CITY.radius && buildableTile(state, x, y)) free++;
     }
   }
-  if (free < 70) return false;
+  if (free < 150) return false;
   const probe: City = { id: -1, owner: -1, name: '', cx: p.x, cy: p.y, dock: p, population: 0, garrison: { sailors: 0, soldiers: 0 }, siege: null };
   state.cities.push(probe);
   const id = state.nextId;

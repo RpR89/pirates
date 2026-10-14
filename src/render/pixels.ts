@@ -64,8 +64,12 @@ export class PixelSheet {
     return this.data[(y * this.width + x) * 4 + 3] === 0;
   }
 
-  /** Aggiunge un contorno scuro attorno ai pixel pieni (stile sprite). */
-  outline(color: string | RGB): void {
+  /** Aggiunge un contorno scuro attorno ai pixel pieni (stile sprite), spesso `width` pixel. */
+  outline(color: string | RGB, width = 1): void {
+    for (let i = 0; i < width; i++) this.outlineOnce(color);
+  }
+
+  private outlineOnce(color: string | RGB): void {
     const add: [number, number][] = [];
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {

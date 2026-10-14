@@ -3,7 +3,7 @@ import { FACTIONS, type FactionId } from '../sim/factions';
 import { HERO, HERO_SKILLS, HERO_SKILL_INFO, heroCityBonus, heroLevel, heroShipBonus, type Hero, type HeroProfile } from '../sim/hero';
 import { dockedCity } from '../sim/simulation';
 import { getCity, getShip, heroOf, type Ship } from '../sim/state';
-import { portraitUrl } from '../render/portrait';
+import { UNIFORMS, portraitUrl } from '../render/portrait';
 import { Bar } from './common';
 
 const pct = (m: number) => `+${Math.round((m - 1) * 100)}%`;
@@ -12,7 +12,10 @@ const pct = (m: number) => `+${Math.round((m - 1) * 100)}%`;
 export function HeroSheet({ hero, faction, compact }: { hero: HeroProfile; faction: FactionId; compact?: boolean }) {
   return (
     <div class="row" style={{ alignItems: 'flex-start', gap: 10 }}>
-      <img src={portraitUrl(hero.seed, faction)} width={compact ? 72 : 96} height={compact ? 72 : 96} style={{ imageRendering: 'pixelated' }} alt="" />
+      <div style={{ textAlign: 'center' }}>
+        <img src={portraitUrl(hero.seed, faction, hero.uniform)} width={compact ? 96 : 144} height={compact ? 96 : 144} style={{ imageRendering: 'pixelated', display: 'block' }} alt="" />
+        <div class="sub" style={{ maxWidth: compact ? 96 : 144 }}>{UNIFORMS[faction][hero.uniform % 3].name}</div>
+      </div>
       <div class="grow">
         {HERO_SKILLS.map((s) => (
           <div title={`Migliora: ${HERO_SKILL_INFO[s].effect}`}>

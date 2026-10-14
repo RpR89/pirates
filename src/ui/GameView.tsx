@@ -75,7 +75,7 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
               ctl.focusHero(false);
             }}
           >
-            <img src={portraitUrl(hero.seed, me.faction!)} width={30} height={30} style={{ imageRendering: 'pixelated', display: 'block' }} alt="" />
+            <img src={portraitUrl(hero.seed, me.faction!, hero.uniform)} width={36} height={36} style={{ imageRendering: 'pixelated', display: 'block' }} alt="" />
             <span style={{ paddingRight: 6 }}>Lv {heroLevel(hero)}{hero.location.type === 'away' ? ' · disperso' : ''}</span>
           </button>
         )}

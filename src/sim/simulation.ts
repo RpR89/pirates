@@ -659,7 +659,7 @@ function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {
         city.siege = city.siege ?? { owner: ship.owner, soldiers: 0 };
         city.siege.soldiers += landed;
         ship.soldiers -= landed;
-        state.events.push({ type: 'troopsLanded', cityId: city.id, owner: ship.owner, defender: city.owner, soldiers: landed });
+        state.events.push({ type: 'troopsLanded', cityId: city.id, owner: ship.owner, defender: city.owner, soldiers: landed, from: { x: ship.x, y: ship.y } });
         idle(ship);
       } else {
         chase(state, ship, dock);

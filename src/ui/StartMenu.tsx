@@ -13,7 +13,9 @@ export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) 
   const [rivals, setRivals] = useState(2);
   const [seed, setSeed] = useState('');
   const [heroSeed, setHeroSeed] = useState(randomSeed);
-  const hero = generateHero(heroSeed, faction, captain.trim() || 'Capitano');
+  const [uniform, setUniform] = useState<number | null>(null);
+  const generated = generateHero(heroSeed, faction, captain.trim() || 'Capitano');
+  const hero = { ...generated, uniform: uniform ?? generated.uniform };
 
   const start = () => {
     const parsed = Number(seed);
@@ -62,7 +64,8 @@ export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) 
                 <input class="grow" value={captain} maxLength={MAX_NAME_LENGTH} placeholder="Capitano" onInput={(e) => setCaptain((e.target as HTMLInputElement).value)} />
               </label>
               <div class="row mt">
-                <button onClick={() => setHeroSeed(randomSeed())}>Genera un altro capitano</button>
+                <button onClick={() => { setHeroSeed(randomSeed()); setUniform(null); }}>Genera un altro capitano</button>
+                <button onClick={() => setUniform((hero.uniform + 1) % 3)}>Cambia divisa</button>
               </div>
               <div class="sub mt">
                 Imbarcato, il capitano potenzia la sua nave (navigazione, artiglieria, spada);

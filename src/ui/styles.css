@@ -66,8 +66,8 @@ input:focus, select:focus { outline: none; border-color: var(--gold); }
 
 /* Barra superiore */
 .topbar {
-  position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 18px; align-items: center;
-  padding: 6px 14px; flex-wrap: wrap;
+  position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 12px; align-items: center;
+  padding: 6px 12px; flex-wrap: nowrap; white-space: nowrap; overflow: hidden;
 }
 .res { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
 .res .icon { width: 12px; height: 12px; display: inline-block; border: 1px solid #1b1712; align-self: center; }

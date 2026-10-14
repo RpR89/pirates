@@ -35,7 +35,7 @@ export interface ShipStats {
   colonists: number;
   /** Dimensione minima della città (vedi CITY_TIERS). */
   tier: number;
-  /** Dimensioni dello sprite visto dall'alto, in pixel. */
+  /** Dimensioni dello scafo visto dall'alto, in caselle (solo per la grafica). */
   length: number;
   beam: number;
 }
@@ -45,36 +45,36 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
     name: 'Sloop',
     description: 'Piccolo e veloce, ideale per esplorare e cacciare mercantili.',
     cost: { gold: 80, wood: 60 }, buildSeconds: 12,
-    hp: 100, damage: 6, range: 4.5, reloadSeconds: 1.5, speed: 3.4,
-    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 36, beam: 15,
+    hp: 100, damage: 6, range: 4.5, reloadSeconds: 1.5, speed: 4.59,
+    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 1.5, beam: 0.625,
   },
   brigantino: {
     name: 'Brigantino',
     description: 'Due alberi, buon equilibrio tra cannoni, velocità e truppe.',
     cost: { gold: 160, wood: 120 }, buildSeconds: 20,
-    hp: 180, damage: 10, range: 5, reloadSeconds: 1.8, speed: 2.9,
-    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 45, beam: 18,
+    hp: 180, damage: 10, range: 5, reloadSeconds: 1.8, speed: 3.92,
+    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 1.875, beam: 0.75,
   },
   fregata: {
     name: 'Fregata',
     description: 'Nave da guerra rapida con una lunga batteria di cannoni.',
     cost: { gold: 300, wood: 220 }, buildSeconds: 30,
-    hp: 300, damage: 16, range: 6, reloadSeconds: 2, speed: 2.6,
-    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 57, beam: 21,
+    hp: 300, damage: 16, range: 6, reloadSeconds: 2, speed: 3.51,
+    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 2.375, beam: 0.875,
   },
   galeone: {
     name: 'Galeone',
     description: 'Una fortezza galleggiante: lento, ma porta un esercito.',
     cost: { gold: 420, wood: 320 }, buildSeconds: 40,
-    hp: 450, damage: 20, range: 5.5, reloadSeconds: 2.8, speed: 1.8,
-    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 66, beam: 27,
+    hp: 450, damage: 20, range: 5.5, reloadSeconds: 2.8, speed: 2.43,
+    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 2.75, beam: 1.125,
   },
   mercantile: {
     name: 'Nave coloniale',
     description: 'Trasporta coloni per fondare una nuova città su una costa libera.',
     cost: { gold: 150, wood: 150 }, buildSeconds: 20,
-    hp: 120, damage: 0, range: 0, reloadSeconds: 0, speed: 2.4,
-    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 45, beam: 21,
+    hp: 120, damage: 0, range: 0, reloadSeconds: 0, speed: 3.24,
+    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 1.875, beam: 0.875,
   },
 };
 
@@ -152,9 +152,9 @@ export const CITY_TIERS = [
 
 export const CITY = {
   /** Gli edifici devono stare entro questa distanza dal centro del municipio. */
-  radius: 7,
+  radius: 10,
   /** Distanza minima tra i centri di due città. */
-  minDistance: 18,
+  minDistance: 26,
   taxPerCitizen: 0.02, // oro al secondo per abitante
   growthBase: 0.1, // abitanti al secondo
   growthPerCitizen: 0.0015,
@@ -199,7 +199,7 @@ export const COMBAT = {
   dockRange: 3,
   repathSeconds: 0.5,
   /** Rapidità delle perdite negli assalti a terra (per tick). */
-  assaultRate: 0.012,
+  assaultRate: 0.007,
   minCrewEfficiency: 0.3,
 };
 

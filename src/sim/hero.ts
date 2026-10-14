@@ -24,6 +24,8 @@ export interface HeroProfile {
   /** Seme del ritratto e delle abilità. */
   seed: number;
   skills: Record<HeroSkill, number>;
+  /** Divisa scelta per il ritratto (solo estetica). */
+  uniform: number;
 }
 
 export interface Hero extends HeroProfile {
@@ -67,7 +69,7 @@ export function generateHero(seed: number, faction: FactionId, name: string): He
       }
     }
   }
-  return { name, seed, skills };
+  return { name, seed, skills, uniform: Math.floor(rng() * 3) };
 }
 
 export function heroLevel(h: Hero): number {

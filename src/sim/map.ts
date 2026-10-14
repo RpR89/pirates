@@ -132,15 +132,17 @@ function valueNoise(rng: () => number, width: number, height: number, cell: numb
   return out;
 }
 
-export const LAND_LEVEL = 0.56;
+/** Frazione della mappa coperta da terra. */
+export const LAND_SHARE = 0.3;
 
 /** Genera un arcipelago deterministico circondato dall'oceano. */
-export function generateMap(seed: number, width = 160, height = 120): TileMap {
+export function generateMap(seed: number, width = 280, height = 210): TileMap {
   const rng = mulberry32(seed);
-  const n1 = valueNoise(rng, width, height, 28);
-  const n2 = valueNoise(rng, width, height, 12);
-  const n3 = valueNoise(rng, width, height, 5);
+  const n1 = valueNoise(rng, width, height, 42);
+  const n2 = valueNoise(rng, width, height, 17);
+  const n3 = valueNoise(rng, width, height, 7);
   const tiles = new Uint8Array(width * height);
+  const heights = new Float32Array(width * height);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -150,13 +152,25 @@ export function generateMap(seed: number, width = 160, height = 120): TileMap {
       const ny = Math.abs((y / (height - 1)) * 2 - 1);
       const edge = Math.max(nx, ny);
       if (edge > 0.75) h -= smooth(Math.min(1, (edge - 0.75) / 0.25)) * 0.35;
+      heights[i] = h;
+    }
+  }
+
+  // Soglia adattiva: ogni mappa ha la stessa quota di terra, qualunque sia il seme.
+  const sorted = Float32Array.from(heights).sort();
+  const level = sorted[Math.floor(sorted.length * (1 - LAND_SHARE))];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const h = heights[i];
       const border = x < 3 || y < 3 || x >= width - 3 || y >= height - 3;
       let t: TileType;
-      if (border || h < LAND_LEVEL - 0.04) t = Tile.Deep;
-      else if (h < LAND_LEVEL) t = Tile.Shallow;
-      else if (h < LAND_LEVEL + 0.025) t = Tile.Sand;
-      else if (h < LAND_LEVEL + 0.09) t = Tile.Grass;
-      else if (h < LAND_LEVEL + 0.15) t = Tile.Forest;
+      if (border || h < level - 0.04) t = Tile.Deep;
+      else if (h < level) t = Tile.Shallow;
+      else if (h < level + 0.025) t = Tile.Sand;
+      else if (h < level + 0.085) t = Tile.Grass;
+      else if (h < level + 0.19) t = Tile.Forest;
       else t = Tile.Rock;
       tiles[i] = t;
     }

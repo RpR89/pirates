@@ -1,5 +1,5 @@
 import type { Command } from './commands';
-import { BUILDINGS, SHIPS, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
+import { BUILDINGS, CITY, SHIPS, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
 import {
   buildProblem,
   dockedCity,
@@ -80,7 +80,7 @@ export class AIController {
       if (tier >= 3 && count('mercato') < 2) wants.push('mercato');
       if (count('fattoria') + count('pescheria') < 2 + Math.floor(city.population / 60)) wants.push('pescheria', 'fattoria');
       const canWall = BUILDINGS.mura.factions?.includes(p.faction!) ?? true;
-      if (canWall && tier >= 2 && count('mura') < 24 && p.wood > 150) {
+      if (canWall && tier >= 2 && count('mura') < 40 && p.wood > 150) {
         const at = this.wallSpot(state, city);
         if (at) {
           out.push({ type: 'placeBuilding', cityId: city.id, kind: 'mura', x: at.x, y: at.y });
@@ -168,7 +168,7 @@ export class AIController {
 
     // Difesa: navi nemiche vicino alle nostre città.
     for (const c of cities) {
-      const intruder = state.ships.find((s) => isEnemy(this.player, s.owner) && distance(s, { x: c.cx, y: c.cy }) < 14);
+      const intruder = state.ships.find((s) => isEnemy(this.player, s.owner) && distance(s, { x: c.cx, y: c.cy }) < 18);
       if (intruder && ready.length) {
         out.push({ type: 'attackShip', shipIds: ready.splice(0).map((s) => s.id), targetId: intruder.id, board: intruder.cls === 'mercantile' });
         return;
@@ -179,7 +179,7 @@ export class AIController {
     const troops = ready.reduce((n, s) => n + s.soldiers, 0);
     const target = this.chooseTarget(state, ready);
     if (!target) return;
-    const near = ready.filter((s) => distance(s, { x: target.cx, y: target.cy }) < 12);
+    const near = ready.filter((s) => distance(s, { x: target.cx, y: target.cy }) < 16);
 
     // Flotta già davanti al bersaglio: prima le torri, poi lo sbarco.
     if (near.length) {
@@ -210,10 +210,11 @@ export class AIController {
   /** Un tratto di mura libero sull'anello attorno al municipio. */
   private wallSpot(state: GameState, city: City): Point | null {
     const spots: Point[] = [];
-    for (let y = city.cy - 6; y <= city.cy + 6; y++) {
-      for (let x = city.cx - 6; x <= city.cx + 6; x++) {
+    const r = CITY.radius * 0.7;
+    for (let y = city.cy - CITY.radius; y <= city.cy + CITY.radius; y++) {
+      for (let x = city.cx - CITY.radius; x <= city.cx + CITY.radius; x++) {
         const d = distance({ x, y }, { x: city.cx, y: city.cy });
-        if (d >= 4.5 && d < 5.5) spots.push({ x, y });
+        if (d >= r - 0.5 && d < r + 0.5) spots.push({ x, y });
       }
     }
     spots.sort((a, b) => a.y - b.y || a.x - b.x);
