@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FactionId } from './factions';
-import { BUILDINGS, ticks, type BuildingKind } from './rules';
+import { BUILDINGS, SUB, ticks, type BuildingKind } from './rules';
 import { buildProblem, fortifications, garrisonStrength } from './simulation';
-import { addBuilding, findPlacement, spawnShip, type GameState } from './state';
+import { addBuilding, buildingAtCell, buildingCenter, findPlacement, spawnShip, type GameState } from './state';
 import { home, newGame, run } from './testing';
 
 /** Città di partenza abbastanza grande per tutti gli edifici, con risorse illimitate. */
@@ -31,7 +31,7 @@ describe('difese', () => {
 
   it('la batteria va sulla costa', () => {
     const { state, city } = rich('spagnoli');
-    expect(buildProblem(state, 1, city.id, 'batteria', city.cx - 1, city.cy + 3)).toBeTruthy();
+    expect(buildProblem(state, 1, city.id, 'batteria', city.cx * SUB - 2, city.cy * SUB + 6)).toBeTruthy();
   });
 
   it('un bastione rafforza la guarnigione più di una torre', () => {
@@ -55,11 +55,12 @@ describe('difese', () => {
       const target = state.cities.find((c) => c.owner === 0)!;
       target.garrison.soldiers = 40;
       let placed = 0;
-      for (let dy = -9; dy <= 9 && placed < moats; dy++) {
-        for (let dx = -9; dx <= 9 && placed < moats; dx++) {
-          const x = target.cx + dx;
-          const y = target.cy + dy;
-          if (!state.buildings.some((b) => b.x === x && b.y === y) && state.map.tiles[y * state.map.width + x] >= 2 && state.map.tiles[y * state.map.width + x] <= 4) {
+      for (let dy = -18; dy <= 18 && placed < moats; dy++) {
+        for (let dx = -18; dx <= 18 && placed < moats; dx++) {
+          const x = target.cx * SUB + dx;
+          const y = target.cy * SUB + dy;
+          const t = state.map.tiles[Math.floor(y / SUB) * state.map.width + Math.floor(x / SUB)];
+          if (!buildingAtCell(state, x, y) && t >= 2 && t <= 4) {
             addBuilding(state, target.id, 'fossato', x, y, true);
             placed++;
           }
@@ -71,7 +72,7 @@ describe('difese', () => {
       run(state, 10);
       return 40 - target.garrison.soldiers; // perdite inflitte ai difensori
     };
-    expect(losses(20)).toBeLessThan(losses(0) * 0.65);
+    expect(losses(40)).toBeLessThan(losses(0) * 0.65);
   });
 
   it('la batteria costiera colpisce navi lontane che la torre non raggiunge', () => {
@@ -79,10 +80,8 @@ describe('difese', () => {
       const { state, city } = rich('spagnoli');
       const p = findPlacement(state, city.id, kind)!;
       const b = addBuilding(state, city.id, kind, p.x, p.y, true);
-      const s = BUILDINGS[kind];
       // Una nave nemica a 8,5 caselle: dentro la gittata della batteria (9), fuori da quella della torre (6).
-      const cx = b.x + s.w / 2;
-      const cy = b.y + s.h / 2;
+      const { x: cx, y: cy } = buildingCenter(b);
       let target: { x: number; y: number } | null = null;
       for (let a = 0; a < 64 && !target; a++) {
         const x = cx + Math.cos((a / 64) * Math.PI * 2) * 8.5;

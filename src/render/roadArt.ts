@@ -1,39 +1,29 @@
 import { hash2, shade } from './color';
 import { PixelSheet } from './pixels';
-import { TILE_PX } from './terrain';
+import { CELL_PX, TILE_PX } from './terrain';
 
 const K = TILE_PX / 16;
 
 /**
- * Casella di strada che si collega ai vicini (bit: 1 N, 2 E, 4 S, 8 O).
+ * Casella edificio di strada (bit dei vicini: 1 N, 2 E, 4 S, 8 O): la casella è
+ * tutta lastricata, con il bordo sui lati senza vicini e gli angoli esterni arrotondati,
+ * così i tratti affiancati si fondono senza buchi.
  * Sterrato nei villaggi, acciottolato quando la città cresce.
  */
 export function drawRoad(mask: number, cobbled: boolean): PixelSheet {
-  const T = TILE_PX;
+  const T = CELL_PX;
   const s = new PixelSheet(T, T);
-  const half = T * 0.22;
-  const c = T / 2;
-  const arms: [number, number][] = [];
-  if (mask & 1) arms.push([0, -1]);
-  if (mask & 2) arms.push([1, 0]);
-  if (mask & 4) arms.push([0, 1]);
-  if (mask & 8) arms.push([-1, 0]);
-  const dist = (x: number, y: number) => {
-    let d = Math.hypot(x - c, y - c) - (arms.length >= 3 ? half * 0.25 : 0);
-    for (const [ax, ay] of arms) {
-      const t = Math.max(0, ((x - c) * ax + (y - c) * ay) / (T / 2));
-      const px = c + ax * Math.min(1, t) * (T / 2);
-      const py = c + ay * Math.min(1, t) * (T / 2);
-      d = Math.min(d, Math.hypot(x - px, y - py));
-    }
-    return d;
-  };
+  const open = { n: !(mask & 1), e: !(mask & 2), s: !(mask & 4), w: !(mask & 8) };
+  const rim = K * 0.7;
+  const round = K * 1.6;
   const stone = Math.max(3, Math.round(K * 1.3));
+  const corner = (dx: number, dy: number) => dx < round && dy < round && Math.hypot(round - dx, round - dy) > round;
   for (let y = 0; y < T; y++) {
     for (let x = 0; x < T; x++) {
-      const d = dist(x + 0.5, y + 0.5);
-      if (d > half) continue;
-      const edge = d > half - K * 0.7;
+      const xr = T - 1 - x;
+      const yb = T - 1 - y;
+      if ((open.n && open.w && corner(x, y)) || (open.n && open.e && corner(xr, y)) || (open.s && open.w && corner(x, yb)) || (open.s && open.e && corner(xr, yb))) continue;
+      const edge = (open.n && y < rim) || (open.s && yb < rim) || (open.w && x < rim) || (open.e && xr < rim);
       const n = hash2(x, y, 12);
       let col: string;
       if (cobbled) {
@@ -45,8 +35,10 @@ export function drawRoad(mask: number, cobbled: boolean): PixelSheet {
       } else {
         col = n % 9 === 0 ? '#9c7a4e' : n % 13 === 0 ? '#c4a676' : '#b39062';
         if (edge) col = n % 3 ? '#9c7e52' : '#8a6c44';
-        // Solchi dei carri.
-        if (!edge && Math.abs(d - half * 0.45) < K * 0.25) col = shade(col, -0.1);
+        // Solchi dei carri lungo i tratti dritti.
+        const vertical = !open.n || !open.s;
+        const horizontal = !open.e || !open.w;
+        if (!edge && ((vertical && Math.abs(Math.abs(x + 0.5 - T / 2) - T * 0.2) < K * 0.25) || (horizontal && Math.abs(Math.abs(y + 0.5 - T / 2) - T * 0.2) < K * 0.25))) col = shade(col, -0.1);
       }
       s.set(x, y, col);
     }

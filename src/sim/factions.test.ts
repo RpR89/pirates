@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, FORTIFICATIONS, ticks } from './rules';
+import { BUILDINGS, FORTIFICATIONS, SUB, ticks } from './rules';
 import { boardingStrength, cityProduction, garrisonStrength } from './simulation';
 import { NEUTRAL, cityBuildings, heroOf, spawnShip, type GameState } from './state';
 import { home, newGame, run } from './testing';
@@ -18,7 +18,7 @@ describe('mura', () => {
       let placed = false;
       for (let dy = -6; dy <= 6 && !placed; dy++) {
         for (let dx = -6; dx <= 6 && !placed; dx++) {
-          run(state, 1, [[1, { type: 'placeBuilding', cityId: city.id, kind: 'mura', x: city.cx + dx, y: city.cy + dy }]]);
+          run(state, 1, [[1, { type: 'placeBuilding', cityId: city.id, kind: 'mura', x: city.cx * SUB + dx, y: city.cy * SUB + dy }]]);
           placed = state.buildings.length > before;
         }
       }
@@ -32,8 +32,8 @@ describe('mura', () => {
     const { city } = home(state, 1);
     const before = garrisonStrength(state, city);
     state.players[1].gold = state.players[1].wood = 10_000;
-    for (let dx = -6; dx <= 6; dx++) {
-      for (const dy of [-5, 5]) run(state, 1, [[1, { type: 'placeBuilding', cityId: city.id, kind: 'mura', x: city.cx + dx, y: city.cy + dy }]]);
+    for (let dx = -12; dx <= 12; dx++) {
+      for (const dy of [-10, 10]) run(state, 1, [[1, { type: 'placeBuilding', cityId: city.id, kind: 'mura', x: city.cx * SUB + dx, y: city.cy * SUB + dy }]]);
     }
     run(state, ticks(10));
     const walls = cityBuildings(state, city.id).filter((b) => b.kind === 'mura').length;

@@ -1,7 +1,7 @@
 import { hash2, shade } from './color';
 import { PixelSheet } from './pixels';
 import type { LookColors } from './shipArt';
-import { TILE_PX } from './terrain';
+import { CELL_PX, TILE_PX } from './terrain';
 
 /** Scala rispetto al disegno di riferimento a 16 px per casella. */
 const K = TILE_PX / 16;
@@ -26,7 +26,7 @@ export const LINE_DIRS: readonly [number, number][] = [[0, -1], [1, -1], [1, 0],
 
 /** Distanza dal "nastro" di una difesa a linea e posizione lungo il tratto più vicino. */
 function band(mask: number): (x: number, y: number) => { d: number; t: number } {
-  const T = TILE_PX;
+  const T = CELL_PX;
   const cx = T / 2;
   const cy = T / 2;
   const segs: [number, number][] = [];
@@ -49,7 +49,7 @@ function band(mask: number): (x: number, y: number) => { d: number; t: number } 
 
 /** Terrapieno: argine erboso con la palizzata in cima. */
 export function drawEarthwork(mask: number, overhang: number): PixelSheet {
-  const s = new PixelSheet(TILE_PX, TILE_PX + overhang);
+  const s = new PixelSheet(CELL_PX, CELL_PX + overhang);
   earthwork(s, overhang, mask, overhang);
   s.outline(OUTLINE, LINE_W);
   return s;
@@ -57,7 +57,7 @@ export function drawEarthwork(mask: number, overhang: number): PixelSheet {
 
 /** Disegna il terrapieno su un foglio esistente; l'impronta inizia a `fy`, il dorso sale di `face`. */
 export function earthwork(s: PixelSheet, fy: number, mask: number, face: number) {
-  const T = TILE_PX;
+  const T = CELL_PX;
   const sample = band(mask);
   const half = u(2);
   const top = fy - face;
@@ -98,7 +98,7 @@ export function earthwork(s: PixelSheet, fy: number, mask: number, face: number)
 
 /** Fossato: canale d'acqua con sponde fangose, un po' incassato nel terreno. */
 export function drawMoat(mask: number): PixelSheet {
-  const T = TILE_PX;
+  const T = CELL_PX;
   const s = new PixelSheet(T, T);
   const sample = band(mask);
   const half = u(1.8);

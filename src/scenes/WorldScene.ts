@@ -1,21 +1,21 @@
 import Phaser from 'phaser';
 import type { GameController } from '../game/controller';
 import type { Keyboard } from '../game/keyboard';
-import { drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
+import { buildingArtScale, buildingOverhang, drawBuilding, drawConstruction } from '../render/buildingArt';
 import { LINE_DIRS } from '../render/fortArt';
 import { toNumber } from '../render/color';
 import { drawShip } from '../render/shipArt';
-import { TILE_PX } from '../render/terrain';
+import { CELL_PX, TILE_PX } from '../render/terrain';
 import { TerrainStreamer } from '../render/terrainStreamer';
 import { SiegeLayer } from './SiegeLayer';
 import { RoadLayer } from './RoadLayer';
 import { FACTIONS } from '../sim/factions';
 import { isLand, type Point } from '../sim/map';
-import { BUILDINGS, CITY, SHIPS, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
+import { BUILDINGS, CITY, SHIPS, SUB, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
 import { buildProblem } from '../sim/simulation';
 import {
   NEUTRAL,
-  buildingAtTile,
+  buildingAtCell,
   buildingOwner,
   footprintDock,
   foundingProblem,
@@ -75,7 +75,8 @@ export class WorldScene extends Phaser.Scene {
   private dragStart: { world: Point; screen: Point } | null = null;
   private dragEnd: Point | null = null;
   private panStart: { x: number; y: number; scrollX: number; scrollY: number } | null = null;
-  private pointerTile: Point = { x: 0, y: 0 };
+  /** Casella edificio sotto il puntatore. */
+  private pointerCell: Point = { x: 0, y: 0 };
   private hoverShip: number | null = null;
   /** Inizio del tratto di mura che si sta trascinando. */
   private wallStart: Point | null = null;
@@ -147,7 +148,7 @@ export class WorldScene extends Phaser.Scene {
     if (kind === 'porta') {
       // Porta in pietra se tocca le mura, di legno se sta in un terrapieno.
       const stone = LINE_DIRS.some(([dx, dy]) => {
-        const b = buildingAtTile(this.state, x + dx, y + dy);
+        const b = buildingAtCell(this.state, x + dx, y + dy);
         return !!b && b.cityId === cityId && b.kind === 'mura';
       });
       return this.lineMask(kind, cityId, x, y) + (stone ? 256 : 0);
@@ -160,7 +161,7 @@ export class WorldScene extends Phaser.Scene {
     if (kind === 'bastione') {
       // La punta del bastione guarda fuori dalla città.
       const city = getCity(this.state, cityId);
-      if (city) toward = { x: 2 * center.x - (city.cx + 0.5), y: 2 * center.y - (city.cy + 0.5) };
+      if (city) toward = { x: 2 * center.x - (city.cx + 0.5) * SUB, y: 2 * center.y - (city.cy + 0.5) * SUB };
     } else {
       // I cannoni della batteria guardano il mare.
       const dock = footprintDock(this.state.map, x, y, s.w, s.h);
@@ -185,7 +186,7 @@ export class WorldScene extends Phaser.Scene {
       fossato: ['fossato'],
     };
     const joins = (dx: number, dy: number) => {
-      const other = buildingAtTile(this.state, x + dx, y + dy);
+      const other = buildingAtCell(this.state, x + dx, y + dy);
       return !!other && other.cityId === cityId && partners[kind].includes(other.kind);
     };
     let mask = 0;
@@ -230,7 +231,7 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       if (this.ctl.mode.type === 'place') {
-        if (BUILDINGS[this.ctl.mode.kind].line) this.wallStart = { ...this.pointerTile };
+        if (BUILDINGS[this.ctl.mode.kind].line) this.wallStart = { ...this.pointerCell };
         else this.placeAt(p.event.shiftKey);
         return;
       }
@@ -242,7 +243,7 @@ export class WorldScene extends Phaser.Scene {
       this.dragEnd = null;
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      this.pointerTile = { x: Math.floor(p.worldX / TILE_PX), y: Math.floor(p.worldY / TILE_PX) };
+      this.pointerCell = { x: Math.floor(p.worldX / CELL_PX), y: Math.floor(p.worldY / CELL_PX) };
       this.hoverShip = this.shipAt(p.worldX, p.worldY)?.id ?? null;
       if (this.panStart) {
         const cam = this.cameras.main;
@@ -254,7 +255,7 @@ export class WorldScene extends Phaser.Scene {
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       this.panStart = null;
       if (this.wallStart) {
-        this.placeWalls(this.wallStart, this.pointerTile);
+        this.placeWalls(this.wallStart, this.pointerCell);
         this.wallStart = null;
         return;
       }
@@ -297,9 +298,9 @@ export class WorldScene extends Phaser.Scene {
   private buildingAt(wx: number, wy: number): Building | null {
     for (const b of this.state.buildings) {
       const s = BUILDINGS[b.kind];
-      const x0 = b.x * TILE_PX;
-      const y0 = b.y * TILE_PX - (b.buildLeft > 0 ? 4 : buildingOverhang(b.kind) / 2);
-      if (wx >= x0 && wx < x0 + s.w * TILE_PX && wy >= y0 && wy < (b.y + s.h) * TILE_PX) return b;
+      const x0 = b.x * CELL_PX;
+      const y0 = b.y * CELL_PX - (b.buildLeft > 0 ? 4 : (buildingOverhang(b.kind) * buildingArtScale(b.kind)) / 2);
+      if (wx >= x0 && wx < x0 + s.w * CELL_PX && wy >= y0 && wy < (b.y + s.h) * CELL_PX) return b;
     }
     return null;
   }
@@ -387,7 +388,7 @@ export class WorldScene extends Phaser.Scene {
 
   private placementOrigin(kind: BuildingKind): Point {
     const s = BUILDINGS[kind];
-    return { x: this.pointerTile.x - Math.floor((s.w - 1) / 2), y: this.pointerTile.y - Math.floor((s.h - 1) / 2) };
+    return { x: this.pointerCell.x - Math.floor((s.w - 1) / 2), y: this.pointerCell.y - Math.floor((s.h - 1) / 2) };
   }
 
   private placeAt(keepPlacing: boolean): void {
@@ -459,11 +460,14 @@ export class WorldScene extends Phaser.Scene {
         vis.sprite.setTexture(key);
         vis.key = key;
       }
-      vis.sprite.setPosition(b.x * TILE_PX, (b.y + s.h) * TILE_PX).setDepth(10 + (b.y + s.h) / 1000);
+      vis.sprite
+        .setScale(b.buildLeft > 0 ? 1 : buildingArtScale(b.kind))
+        .setPosition(b.x * CELL_PX, (b.y + s.h) * CELL_PX)
+        .setDepth(10 + (b.y + s.h) / 1000);
       // Fumo dagli edifici danneggiati.
       if (b.buildLeft <= 0 && b.hp < s.hp * 0.5 && time > vis.smokeAt) {
         vis.smokeAt = time + 250 + Math.random() * 300;
-        this.smoke((b.x + Math.random() * s.w) * TILE_PX, (b.y + Math.random() * s.h) * TILE_PX);
+        this.smoke((b.x + Math.random() * s.w) * CELL_PX, (b.y + Math.random() * s.h) * CELL_PX);
       }
     }
     for (const [id, vis] of this.buildings) {
@@ -666,17 +670,18 @@ export class WorldScene extends Phaser.Scene {
     const selBuilding = this.ctl.selectedBuilding();
     for (const b of state.buildings) {
       const s = BUILDINGS[b.kind];
-      const x = b.x * TILE_PX;
-      const y = b.y * TILE_PX;
+      const x = b.x * CELL_PX;
+      const y = b.y * CELL_PX;
+      const w = s.w * CELL_PX;
       if (selBuilding?.id === b.id) {
         g.lineStyle(this.lw(), 0xffffff, 1);
-        this.brackets(g, x - 1, y - 1, s.w * TILE_PX + 2, s.h * TILE_PX + 2);
+        this.brackets(g, x - 1, y - 1, w + 2, s.h * CELL_PX + 2);
       }
       if (b.buildLeft > 0) {
         const total = ticks(s.buildSeconds);
-        this.bar(g, x + s.w * TILE_PX / 2, y - 3 * S, s.w * TILE_PX - 4 * S, 1 - b.buildLeft / total, 0xe3b23c);
+        this.bar(g, x + w / 2, y - 3 * S, Math.max(w - 4 * S, 12 * S), 1 - b.buildLeft / total, 0xe3b23c);
       } else if (b.hp < s.hp) {
-        this.hpBar(g, x + s.w * TILE_PX / 2, y - buildingOverhang(b.kind) - 3 * S, Math.min(30 * S, s.w * TILE_PX), b.hp / s.hp);
+        this.hpBar(g, x + w / 2, y - buildingOverhang(b.kind) * buildingArtScale(b.kind) - 3 * S, Math.max(12 * S, Math.min(30 * S, w)), b.hp / s.hp);
       }
     }
 
@@ -737,7 +742,7 @@ export class WorldScene extends Phaser.Scene {
     let { x, y } = a;
     for (;;) {
       out.push({ x, y });
-      if ((x === b.x && y === b.y) || out.length >= 60) break;
+      if ((x === b.x && y === b.y) || out.length >= 120) break;
       const e2 = 2 * err;
       if (e2 >= dy) {
         err += dy;
@@ -775,12 +780,12 @@ export class WorldScene extends Phaser.Scene {
       const g = this.overlay;
       const me = this.state.players[this.ctl.me];
       let budget = { gold: me.gold, wood: me.wood };
-      for (const t of this.wallLine(this.wallStart ?? this.pointerTile, this.pointerTile)) {
+      for (const t of this.wallLine(this.wallStart ?? this.pointerCell, this.pointerCell)) {
         const cost = BUILDINGS[mode.kind].cost;
         const ok = !placementProblem(this.state, this.ctl.me, mode.cityId, mode.kind, t.x, t.y) && budget.gold >= cost.gold && budget.wood >= cost.wood;
         if (ok) budget = { gold: budget.gold - cost.gold, wood: budget.wood - cost.wood };
-        g.fillStyle(ok ? 0x7dff7d : 0xff5a4a, 0.35).fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
-        g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
+        g.fillStyle(ok ? 0x7dff7d : 0xff5a4a, 0.35).fillRect(t.x * CELL_PX, t.y * CELL_PX, CELL_PX, CELL_PX);
+        g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * CELL_PX, t.y * CELL_PX, CELL_PX, CELL_PX);
       }
       return;
     }
@@ -790,13 +795,14 @@ export class WorldScene extends Phaser.Scene {
     this.ghost
       .setTexture(this.kindTexture(mode.kind, this.ctl.me, this.variantOf(mode.kind, mode.cityId, at.x, at.y)))
       .setOrigin(0, 1)
-      .setPosition(at.x * TILE_PX, (at.y + s.h) * TILE_PX)
+      .setScale(buildingArtScale(mode.kind))
+      .setPosition(at.x * CELL_PX, (at.y + s.h) * CELL_PX)
       .setAlpha(0.75)
       .setTint(ok ? 0xa8ffa8 : 0xff8080)
       .setVisible(true);
     const g = this.overlay;
     g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 1);
-    g.strokeRect(at.x * TILE_PX, at.y * TILE_PX, s.w * TILE_PX, s.h * TILE_PX);
+    g.strokeRect(at.x * CELL_PX, at.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX);
   }
 
   private orderLine(g: Phaser.GameObjects.Graphics, s: Ship, x: number, y: number): void {
@@ -810,7 +816,7 @@ export class WorldScene extends Phaser.Scene {
       c = o.board ? 0xffcd75 : 0xff5a4a;
     } else if (o.type === 'attackBuilding') {
       const b = state.buildings.find((x) => x.id === o.targetId);
-      if (b) to = { x: (b.x + BUILDINGS[b.kind].w / 2) * TILE_PX, y: (b.y + BUILDINGS[b.kind].h / 2) * TILE_PX };
+      if (b) to = { x: (b.x + BUILDINGS[b.kind].w / 2) * CELL_PX, y: (b.y + BUILDINGS[b.kind].h / 2) * CELL_PX };
       c = 0xff5a4a;
     } else if (o.type === 'land') {
       const city = getCity(state, o.cityId);

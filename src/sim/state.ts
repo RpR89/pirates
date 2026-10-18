@@ -9,6 +9,7 @@ import {
   RECRUIT,
   SHIPS,
   START,
+  SUB,
   type BuildingKind,
   type ShipClass,
   ticks,
@@ -194,9 +195,21 @@ export function cityCenter(c: City): Point {
   return { x: c.cx + 0.5, y: c.cy + 0.5 };
 }
 
+/** Centro di un edificio in caselle di mappa. */
 export function buildingCenter(b: Building): Point {
   const s = BUILDINGS[b.kind];
-  return { x: b.x + s.w / 2, y: b.y + s.h / 2 };
+  return { x: (b.x + s.w / 2) / SUB, y: (b.y + s.h / 2) / SUB };
+}
+
+/** Casella di mappa che contiene una casella edificio. */
+export function cellTile(x: number, y: number): Point {
+  return { x: Math.floor(x / SUB), y: Math.floor(y / SUB) };
+}
+
+/** Angolo del municipio (4×4 caselle edificio) centrato sulla casella di mappa (cx, cy). */
+export function municipioOrigin(cx: number, cy: number): Point {
+  const w = BUILDINGS.municipio.w;
+  return { x: cx * SUB + SUB / 2 - w / 2, y: cy * SUB + SUB / 2 - w / 2 };
 }
 
 export function buildingOwner(state: GameState, b: Building): PlayerId {
@@ -282,9 +295,10 @@ const occupancyCache = new WeakMap<Building[], { length: number; grid: Int32Arra
 
 function occupancy(state: GameState): Int32Array {
   const list = state.buildings;
+  const width = state.map.width * SUB;
+  const height = state.map.height * SUB;
   const cached = occupancyCache.get(list);
-  if (cached && cached.length === list.length && cached.width === state.map.width) return cached.grid;
-  const { width, height } = state.map;
+  if (cached && cached.length === list.length && cached.width === width) return cached.grid;
   const grid = new Int32Array(width * height).fill(-1);
   list.forEach((b, i) => {
     const s = BUILDINGS[b.kind];
@@ -298,34 +312,65 @@ function occupancy(state: GameState): Int32Array {
   return grid;
 }
 
-export function buildingAtTile(state: GameState, x: number, y: number): Building | undefined {
-  if (x < 0 || y < 0 || x >= state.map.width || y >= state.map.height) return undefined;
-  const i = occupancy(state)[y * state.map.width + x];
+/** Edificio sulla casella edificio (x, y). */
+export function buildingAtCell(state: GameState, x: number, y: number): Building | undefined {
+  const width = state.map.width * SUB;
+  if (x < 0 || y < 0 || x >= width || y >= state.map.height * SUB) return undefined;
+  const i = occupancy(state)[y * width + x];
   return i >= 0 ? state.buildings[i] : undefined;
 }
 
-function buildableTile(state: GameState, x: number, y: number): boolean {
-  return isLand(state.map, x, y) && tileAt(state.map, x, y) !== Tile.Rock && !buildingAtTile(state, x, y);
+/** Un edificio qualunque sulla casella di mappa (x, y). */
+export function buildingOnTile(state: GameState, x: number, y: number): Building | undefined {
+  for (let j = 0; j < SUB; j++) {
+    for (let i = 0; i < SUB; i++) {
+      const b = buildingAtCell(state, x * SUB + i, y * SUB + j);
+      if (b) return b;
+    }
+  }
+  return undefined;
 }
 
-/** Casella di mare accanto all'impronta, o null. */
+/** Terreno su cui si può costruire (casella edificio). */
+export function cellGround(map: TileMap, x: number, y: number): boolean {
+  const t = cellTile(x, y);
+  return isLand(map, t.x, t.y) && tileAt(map, t.x, t.y) !== Tile.Rock;
+}
+
+function cellSea(map: TileMap, x: number, y: number): boolean {
+  const t = cellTile(x, y);
+  return isSea(map, t.x, t.y);
+}
+
+function buildableTile(state: GameState, x: number, y: number): boolean {
+  return isLand(state.map, x, y) && tileAt(state.map, x, y) !== Tile.Rock && !buildingOnTile(state, x, y);
+}
+
+function buildableCell(state: GameState, x: number, y: number): boolean {
+  return cellGround(state.map, x, y) && !buildingAtCell(state, x, y);
+}
+
+/** Casella edificio di mare accanto all'impronta (in caselle edificio), o null. */
 export function footprintDock(map: TileMap, x: number, y: number, w: number, h: number): Point | null {
   for (let i = 0; i < w; i++) {
-    if (isSea(map, x + i, y + h)) return { x: x + i, y: y + h };
-    if (isSea(map, x + i, y - 1)) return { x: x + i, y: y - 1 };
+    if (cellSea(map, x + i, y + h)) return { x: x + i, y: y + h };
+    if (cellSea(map, x + i, y - 1)) return { x: x + i, y: y - 1 };
   }
   for (let j = 0; j < h; j++) {
-    if (isSea(map, x + w, y + j)) return { x: x + w, y: y + j };
-    if (isSea(map, x - 1, y + j)) return { x: x - 1, y: y + j };
+    if (cellSea(map, x + w, y + j)) return { x: x + w, y: y + j };
+    if (cellSea(map, x - 1, y + j)) return { x: x - 1, y: y + j };
   }
   return null;
 }
 
-/** Punto di varo delle navi di un cantiere. */
+/** Punto di varo delle navi di un cantiere, in caselle di mappa. */
 export function shipyardDock(state: GameState, b: Building): Point {
   const s = BUILDINGS[b.kind];
-  const dock = footprintDock(state.map, b.x, b.y, s.w, s.h) ?? nearestSea(state.map, b.x, b.y, 6) ?? { x: b.x, y: b.y };
-  return { x: dock.x + 0.5, y: dock.y + 0.5 };
+  const dock = footprintDock(state.map, b.x, b.y, s.w, s.h);
+  if (dock) return { x: (dock.x + 0.5) / SUB, y: (dock.y + 0.5) / SUB };
+  const t = cellTile(b.x, b.y);
+  const sea = nearestSea(state.map, t.x, t.y, 6) ?? t;
+  return { x: sea.x + 0.5, y: sea.y + 0.5 };
 }
 
 /** Una porta si può aprire sopra un tratto di mura o di terrapieno della stessa città. */
@@ -351,13 +396,14 @@ export function placementProblem(
   const center = cityCenter(city);
   for (let j = 0; j < s.h; j++) {
     for (let i = 0; i < s.w; i++) {
-      const tx = x + i;
-      const ty = y + j;
-      if (distance({ x: tx + 0.5, y: ty + 0.5 }, center) > CITY.radius) return 'Troppo lontano dal municipio';
-      const occupant = buildingAtTile(state, tx, ty);
+      const cx = x + i;
+      const cy = y + j;
+      if (distance({ x: (cx + 0.5) / SUB, y: (cy + 0.5) / SUB }, center) > CITY.radius) return 'Troppo lontano dal municipio';
+      const occupant = buildingAtCell(state, cx, cy);
       if (occupant && !(kind === 'porta' && isGateSite(occupant, cityId))) return 'Spazio occupato';
-      if (!isLand(state.map, tx, ty)) return 'Serve terraferma';
-      if (tileAt(state.map, tx, ty) === Tile.Rock) return 'Terreno roccioso';
+      const t = cellTile(cx, cy);
+      if (!isLand(state.map, t.x, t.y)) return 'Serve terraferma';
+      if (tileAt(state.map, t.x, t.y) === Tile.Rock) return 'Terreno roccioso';
     }
   }
   if (s.coastal && !footprintDock(state.map, x, y, s.w, s.h)) return 'Deve toccare il mare';
@@ -368,19 +414,19 @@ export function placementProblem(
 export function findPlacement(state: GameState, cityId: number, kind: BuildingKind): Point | null {
   const city = getCity(state, cityId);
   if (!city) return null;
-  const r = CITY.radius;
+  const r = CITY.radius * SUB;
   const candidates: Point[] = [];
-  for (let y = city.cy - r; y <= city.cy + r; y++) {
-    for (let x = city.cx - r; x <= city.cx + r; x++) candidates.push({ x, y });
+  for (let y = city.cy * SUB - r; y <= city.cy * SUB + r; y++) {
+    for (let x = city.cx * SUB - r; x <= city.cx * SUB + r; x++) candidates.push({ x, y });
   }
   const s = BUILDINGS[kind];
-  const c = cityCenter(city);
+  const c = { x: (city.cx + 0.5) * SUB, y: (city.cy + 0.5) * SUB };
   candidates.sort((a, b) => {
     const da = distance({ x: a.x + s.w / 2, y: a.y + s.h / 2 }, c);
     const db = distance({ x: b.x + s.w / 2, y: b.y + s.h / 2 }, c);
     return da - db || a.y - b.y || a.x - b.x;
   });
-  // Lascia un passaggio libero attorno al municipio e la strada davanti alle porte.
+  // Lascia una piazza libera attorno al municipio e la strada davanti alle porte.
   const m = municipioOf(state, cityId);
   const doors = new Set(
     cityBuildings(state, cityId)
@@ -391,13 +437,25 @@ export function findPlacement(state: GameState, cityId: number, kind: BuildingKi
     for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) if (doors.has(`${p.x + i},${p.y + j}`)) return true;
     return false;
   };
+  // Un vicolo di una casella attorno a ogni edificio, perché le strade possano passare.
+  const crowded = (p: Point) => {
+    for (let j = -1; j <= s.h; j++) {
+      for (let i = -1; i <= s.w; i++) {
+        if (i >= 0 && j >= 0 && i < s.w && j < s.h) continue;
+        const b = buildingAtCell(state, p.x + i, p.y + j);
+        if (b && !BUILDINGS[b.kind].line) return true;
+      }
+    }
+    return false;
+  };
   for (const p of candidates) {
-    if (m && p.x + s.w > m.x - 1 && p.x < m.x + 4 && p.y + s.h > m.y - 1 && p.y < m.y + 4) continue;
+    const mw = BUILDINGS.municipio.w;
+    if (m && p.x + s.w > m.x - 2 && p.x < m.x + mw + 2 && p.y + s.h > m.y - 2 && p.y < m.y + mw + 3) continue;
     if (!s.line) {
-      if (coversDoor(p)) continue;
+      if (coversDoor(p) || crowded(p)) continue;
       // La propria porta deve affacciarsi su una casella libera (non serve agli edifici sulla costa).
       const door = { x: p.x + Math.floor(s.w / 2), y: p.y + s.h };
-      if (!s.coastal && !buildableTile(state, door.x, door.y)) continue;
+      if (!s.coastal && !buildableCell(state, door.x, door.y)) continue;
     }
     if (!placementProblem(state, city.owner, cityId, kind, p.x, p.y)) return p;
   }
@@ -484,7 +542,8 @@ export function addCity(state: GameState, owner: PlayerId, cx: number, cy: numbe
     siege: null,
   };
   state.cities.push(city);
-  addBuilding(state, city.id, 'municipio', cx - 1, cy - 1, true);
+  const at = municipioOrigin(cx, cy);
+  addBuilding(state, city.id, 'municipio', at.x, at.y, true);
   return city;
 }
 
@@ -591,7 +650,8 @@ function findPlacementForNewCity(state: GameState, p: Point): boolean {
   const probe: City = { id: -1, owner: -1, name: '', cx: p.x, cy: p.y, dock: p, population: 0, garrison: { sailors: 0, soldiers: 0 }, siege: null };
   state.cities.push(probe);
   const id = state.nextId;
-  const m = addBuilding(state, -1, 'municipio', p.x - 1, p.y - 1, true);
+  const at = municipioOrigin(p.x, p.y);
+  const m = addBuilding(state, -1, 'municipio', at.x, at.y, true);
   const yardAt = findPlacement(state, -1, 'cantiere');
   const yard = yardAt && addBuilding(state, -1, 'cantiere', yardAt.x, yardAt.y, true);
   const ok = yard !== null && findPlacement(state, -1, 'fattoria') !== null;

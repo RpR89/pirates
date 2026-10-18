@@ -1,7 +1,10 @@
 import { Tile, isWaterTile, tileAt, type TileMap } from '../sim/map';
 import { bayer, hash2, hex, mix, type RGB } from './color';
+import { SUB } from '../sim/rules';
 
 export const TILE_PX = 72;
+/** Lato di una casella edificio: la griglia degli edifici è SUB volte più fine della mappa. */
+export const CELL_PX = TILE_PX / SUB;
 /** Scala dei dettagli rispetto alle caselle da 16 px su cui sono stati tarati. */
 const K = TILE_PX / 16;
 const HALF = TILE_PX / 2;

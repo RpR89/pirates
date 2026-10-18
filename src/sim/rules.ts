@@ -7,6 +7,13 @@ export const TICK_MS = 1000 / TICK_RATE;
 
 export const ticks = (seconds: number): number => Math.round(seconds * TICK_RATE);
 
+/**
+ * Gli edifici stanno su una griglia più fine della mappa: ogni casella di mappa
+ * è divisa in SUB×SUB caselle edificio. Posizioni e dimensioni degli edifici
+ * (x, y, w, h) sono in caselle edificio; tutto il resto è in caselle di mappa.
+ */
+export const SUB = 2;
+
 export interface Cost {
   gold: number;
   wood: number;
@@ -94,7 +101,7 @@ export const BUILDABLE: readonly BuildingKind[] = [
 export interface BuildingStats {
   name: string;
   description: string;
-  w: number; // caselle
+  w: number; // caselle edificio (SUB per casella di mappa)
   h: number;
   cost: Cost;
   buildSeconds: number;
@@ -127,21 +134,21 @@ const B = (s: Partial<BuildingStats> & Pick<BuildingStats, 'name' | 'description
 });
 
 export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
-  municipio: B({ name: 'Municipio', description: 'Il cuore della città: alloggi, tasse e un cannone di difesa.', w: 3, h: 3, cost: { gold: 0, wood: 0 }, buildSeconds: 0, hp: 800, housing: 12, gold: 0.6, wood: 0.4, food: 0.8, damage: 5, range: 5, reloadSeconds: 2.5 }),
-  casa: B({ name: 'Casa', description: 'Alloggi per 8 abitanti: la città può crescere.', w: 1, h: 1, cost: { gold: 30, wood: 40 }, buildSeconds: 8, hp: 120, housing: 8 }),
-  fattoria: B({ name: 'Fattoria', description: 'Campi coltivati: produce cibo.', w: 2, h: 2, cost: { gold: 40, wood: 50 }, buildSeconds: 12, hp: 150, food: 1.6 }),
-  pescheria: B({ name: 'Pescheria', description: 'Pontile e barche da pesca: molto cibo, ma va sulla costa.', w: 2, h: 2, cost: { gold: 60, wood: 50 }, buildSeconds: 12, hp: 150, food: 2.2, coastal: true }),
-  segheria: B({ name: 'Segheria', description: 'Taglia il legname: rende di più vicino ai boschi.', w: 2, h: 2, cost: { gold: 40, wood: 20 }, buildSeconds: 10, hp: 150, wood: 1 }),
-  mercato: B({ name: 'Mercato', description: 'Commercio e dazi: produce oro.', w: 2, h: 2, cost: { gold: 80, wood: 80 }, buildSeconds: 15, hp: 180, gold: 1.2, tier: 2 }),
-  cantiere: B({ name: 'Cantiere navale', description: 'Costruisce le navi. Va sulla costa.', w: 2, h: 2, cost: { gold: 100, wood: 120 }, buildSeconds: 18, hp: 250, coastal: true }),
-  caserma: B({ name: 'Caserma', description: 'Arruola marinai e soldati tra gli abitanti.', w: 2, h: 2, cost: { gold: 100, wood: 80 }, buildSeconds: 15, hp: 300 }),
-  torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2, defense: 0.05, militia: 5 }),
-  mura: B({ name: 'Mura', description: 'Mura in pietra: si tracciano trascinando, anche in diagonale. Rendono la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 6, wood: 10 }, buildSeconds: 4, hp: 400, line: true, defense: 0.04, militia: 1.5, factions: ['inglesi', 'francesi', 'spagnoli'] }),
-  terrapieno: B({ name: 'Terrapieno', description: 'Argine di terra con palizzata: economico e veloce, protegge meno delle mura. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 2, wood: 6 }, buildSeconds: 3, hp: 250, line: true, defense: 0.025, militia: 1 }),
+  municipio: B({ name: 'Municipio', description: 'Il cuore della città: alloggi, tasse e un cannone di difesa.', w: 4, h: 4, cost: { gold: 0, wood: 0 }, buildSeconds: 0, hp: 800, housing: 12, gold: 0.6, wood: 0.4, food: 0.8, damage: 5, range: 5, reloadSeconds: 2.5 }),
+  casa: B({ name: 'Casa', description: 'Alloggi per 8 abitanti: la città può crescere.', w: 2, h: 2, cost: { gold: 30, wood: 40 }, buildSeconds: 8, hp: 120, housing: 8 }),
+  fattoria: B({ name: 'Fattoria', description: 'Campi coltivati: produce cibo.', w: 3, h: 3, cost: { gold: 40, wood: 50 }, buildSeconds: 12, hp: 150, food: 1.6 }),
+  pescheria: B({ name: 'Pescheria', description: 'Pontile e barche da pesca: molto cibo, ma va sulla costa.', w: 3, h: 3, cost: { gold: 60, wood: 50 }, buildSeconds: 12, hp: 150, food: 2.2, coastal: true }),
+  segheria: B({ name: 'Segheria', description: 'Taglia il legname: rende di più vicino ai boschi.', w: 3, h: 3, cost: { gold: 40, wood: 20 }, buildSeconds: 10, hp: 150, wood: 1 }),
+  mercato: B({ name: 'Mercato', description: 'Commercio e dazi: produce oro.', w: 3, h: 3, cost: { gold: 80, wood: 80 }, buildSeconds: 15, hp: 180, gold: 1.2, tier: 2 }),
+  cantiere: B({ name: 'Cantiere navale', description: 'Costruisce le navi. Va sulla costa.', w: 3, h: 3, cost: { gold: 100, wood: 120 }, buildSeconds: 18, hp: 250, coastal: true }),
+  caserma: B({ name: 'Caserma', description: 'Arruola marinai e soldati tra gli abitanti.', w: 3, h: 3, cost: { gold: 100, wood: 80 }, buildSeconds: 15, hp: 300 }),
+  torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 2, h: 2, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2, defense: 0.05, militia: 5 }),
+  mura: B({ name: 'Mura', description: 'Mura in pietra: si tracciano trascinando, anche in diagonale. Rendono la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 3, wood: 5 }, buildSeconds: 3, hp: 400, line: true, defense: 0.02, militia: 0.75, factions: ['inglesi', 'francesi', 'spagnoli'] }),
+  terrapieno: B({ name: 'Terrapieno', description: 'Argine di terra con palizzata: economico e veloce, protegge meno delle mura. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 1, wood: 3 }, buildSeconds: 2, hp: 250, line: true, defense: 0.0125, militia: 0.5 }),
   porta: B({ name: 'Porta', description: 'Porta della cinta: in pietra nelle mura, di legno nei terrapieni. Si piazza anche sopra un tratto già costruito, che sostituisce. Le strade escono dalla cinta solo dalle porte.', w: 1, h: 1, cost: { gold: 20, wood: 25 }, buildSeconds: 6, hp: 500, line: true, defense: 0.04, militia: 1.5 }),
-  fossato: B({ name: 'Fossato', description: 'Canale d’acqua scavato attorno alla città: gli assalitori che lo devono attraversare combattono peggio. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 4, wood: 2 }, buildSeconds: 5, hp: 600, line: true, moat: 0.025 }),
-  bastione: B({ name: 'Bastione', description: 'Fortificazione in pietra a punta, armata di cannoni: spara alle navi e rafforza molto la guarnigione.', w: 2, h: 2, cost: { gold: 220, wood: 260 }, buildSeconds: 30, hp: 1200, damage: 18, range: 7.5, reloadSeconds: 2.4, tier: 2, defense: 0.15, militia: 8, factions: ['inglesi', 'francesi', 'spagnoli'] }),
-  batteria: B({ name: 'Batteria costiera', description: 'Piazzola di cannoni pesanti sulla costa: la gittata più lunga, per chiudere l’ingresso del porto.', w: 2, h: 2, cost: { gold: 160, wood: 180 }, buildSeconds: 24, hp: 700, damage: 26, range: 9, reloadSeconds: 3.2, tier: 2, coastal: true, militia: 2 }),
+  fossato: B({ name: 'Fossato', description: 'Canale d’acqua scavato attorno alla città: gli assalitori che lo devono attraversare combattono peggio. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 2, wood: 1 }, buildSeconds: 3, hp: 600, line: true, moat: 0.0125 }),
+  bastione: B({ name: 'Bastione', description: 'Fortificazione in pietra a punta, armata di cannoni: spara alle navi e rafforza molto la guarnigione.', w: 4, h: 4, cost: { gold: 220, wood: 260 }, buildSeconds: 30, hp: 1200, damage: 18, range: 7.5, reloadSeconds: 2.4, tier: 2, defense: 0.15, militia: 8, factions: ['inglesi', 'francesi', 'spagnoli'] }),
+  batteria: B({ name: 'Batteria costiera', description: 'Piazzola di cannoni pesanti sulla costa: la gittata più lunga, per chiudere l’ingresso del porto.', w: 4, h: 4, cost: { gold: 160, wood: 180 }, buildSeconds: 24, hp: 700, damage: 26, range: 9, reloadSeconds: 3.2, tier: 2, coastal: true, militia: 2 }),
 };
 
 export const FORTIFICATIONS = {

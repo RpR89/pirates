@@ -1,5 +1,5 @@
 import type { Command } from './commands';
-import { BUILDINGS, CITY, SHIPS, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
+import { BUILDINGS, CITY, SHIPS, SUB, TICK_RATE, UNITS, type BuildingKind, type ShipClass } from './rules';
 import {
   buildProblem,
   dockedCity,
@@ -83,11 +83,11 @@ export class AIController {
       if (count('fattoria') + count('pescheria') < 2 + Math.floor(city.population / 60)) wants.push('pescheria', 'fattoria');
       // Cinta difensiva: mura in pietra, o terrapieni per chi non può costruirle.
       const ring: BuildingKind = BUILDINGS.mura.factions?.includes(p.faction!) ? 'mura' : 'terrapieno';
-      if (tier >= 2 && count(ring) < 45 && p.wood > 150) {
+      if (tier >= 2 && count(ring) < 100 && p.wood > 150) {
         const at = this.wallSpot(state, city, ring);
         if (at) {
           // Porte nei punti cardinali della cinta, così le strade possono uscire.
-          const kind: BuildingKind = at.x === city.cx || at.y === city.cy ? 'porta' : ring;
+          const kind: BuildingKind = at.x === city.cx * SUB || at.y === city.cy * SUB ? 'porta' : ring;
           out.push({ type: 'placeBuilding', cityId: city.id, kind, x: at.x, y: at.y });
           return;
         }
@@ -212,13 +212,15 @@ export class AIController {
     }
   }
 
-  /** Un tratto di mura libero sull'anello attorno al municipio. */
+  /** Un tratto di mura libero sull'anello attorno al municipio (in caselle edificio). */
   private wallSpot(state: GameState, city: City, kind: BuildingKind): Point | null {
     const spots: Point[] = [];
-    const r = CITY.radius * 0.7;
-    for (let y = city.cy - CITY.radius; y <= city.cy + CITY.radius; y++) {
-      for (let x = city.cx - CITY.radius; x <= city.cx + CITY.radius; x++) {
-        const d = distance({ x, y }, { x: city.cx, y: city.cy });
+    const R = CITY.radius * SUB;
+    const r = R * 0.7;
+    const center = { x: (city.cx + 0.5) * SUB, y: (city.cy + 0.5) * SUB };
+    for (let y = city.cy * SUB - R; y <= city.cy * SUB + R; y++) {
+      for (let x = city.cx * SUB - R; x <= city.cx * SUB + R; x++) {
+        const d = distance({ x: x + 0.5, y: y + 0.5 }, center);
         if (d >= r - 0.5 && d < r + 0.5) spots.push({ x, y });
       }
     }

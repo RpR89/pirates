@@ -68,5 +68,5 @@ if (params.has('terrain')) {
   title('Capitani');
   for (const id of FACTION_IDS) for (let uni = 0; uni < 3; uni++) for (let seed = 1; seed <= 2; seed++) show(drawPortrait(seed * 7919 + id.length + uni, id, uni), 1.5);
   title('In costruzione');
-  for (const size of [1, 2, 3]) show(drawConstruction(size, size), 1);
+  for (const size of [2, 3, 4]) show(drawConstruction(size, size), 1);
 }

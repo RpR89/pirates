@@ -12,6 +12,7 @@ import {
   RECRUIT,
   SHIPS,
   FORTIFICATIONS,
+  SUB,
   TICK_RATE,
   UNITS,
   ticks,
@@ -23,7 +24,7 @@ import {
 import {
   NEUTRAL,
   addBuilding,
-  buildingAtTile,
+  buildingAtCell,
   isGateSite,
   addCity,
   buildingCenter,
@@ -112,8 +113,11 @@ function pay(p: Player, cost: Cost): void {
 }
 
 function nearForest(state: GameState, b: Building): boolean {
-  for (let y = b.y - 3; y <= b.y + 4; y++) {
-    for (let x = b.x - 3; x <= b.x + 4; x++) {
+  const c = buildingCenter(b);
+  const cx = Math.floor(c.x);
+  const cy = Math.floor(c.y);
+  for (let y = cy - 4; y <= cy + 4; y++) {
+    for (let x = cx - 4; x <= cx + 4; x++) {
       if (tileAt(state.map, x, y) === Tile.Forest) return true;
     }
   }
@@ -289,7 +293,7 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
       if (buildProblem(state, player, cmd.cityId, cmd.kind, cmd.x, cmd.y)) return;
       pay(state.players[player], BUILDINGS[cmd.kind].cost);
       // Una porta sostituisce il tratto di cinta su cui viene aperta.
-      const replaced = cmd.kind === 'porta' ? buildingAtTile(state, cmd.x, cmd.y) : undefined;
+      const replaced = cmd.kind === 'porta' ? buildingAtCell(state, cmd.x, cmd.y) : undefined;
       if (replaced && isGateSite(replaced, cmd.cityId)) state.buildings = state.buildings.filter((b) => b !== replaced);
       addBuilding(state, cmd.cityId, cmd.kind, cmd.x, cmd.y, false);
       break;
@@ -623,7 +627,7 @@ function idle(ship: Ship): void {
 /** Distanza di tiro verso un edificio: conta anche la sua grandezza. */
 function buildingReach(b: Building): number {
   const s = BUILDINGS[b.kind];
-  return Math.max(s.w, s.h) / 2;
+  return Math.max(s.w, s.h) / 2 / SUB;
 }
 
 function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {

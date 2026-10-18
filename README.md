@@ -27,7 +27,8 @@ una tua città dopo un minuto.
 ## Come si gioca
 
 - **Città.** Clicca sul municipio per il menu della città. Con *Costruisci* scegli
-  un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città: case
+  un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città, su una
+  griglia fine (mezza casella di mappa): case
   (abitanti), fattorie e pescherie (cibo), segheria (legno), mercato (oro),
   cantiere navale e caserma. Cantiere e pescheria vanno sulla costa. Le strade
   si tracciano da sole: collegano ogni edificio alla piazza del municipio
