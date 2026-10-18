@@ -3,7 +3,7 @@ import { hash2, shade } from './color';
 import { PixelSheet } from './pixels';
 import type { LookColors } from './shipArt';
 import { TILE_PX } from './terrain';
-import { LINE_DIRS, drawBastion, drawBattery, drawEarthwork, drawMoat } from './fortArt';
+import { LINE_DIRS, drawBastion, drawBattery, drawEarthwork, drawMoat, earthwork } from './fortArt';
 
 /**
  * I disegni sono pensati in "unità di riferimento" (16 per casella) e scalati a
@@ -18,7 +18,7 @@ const FINE = Math.max(3, Math.round(K * 0.9));
 /** Pixel extra sopra l'impronta, per tetti e torri che "salgono". */
 export function buildingOverhang(kind: BuildingKind): number {
   if (kind === 'fossato' || kind === 'bastione' || kind === 'batteria') return 0;
-  return u(kind === 'torre' ? 14 : kind === 'municipio' ? 14 : kind === 'casa' ? 6 : kind === 'mura' ? 4 : kind === 'terrapieno' ? 2.5 : 9);
+  return u(kind === 'torre' ? 14 : kind === 'municipio' ? 14 : kind === 'casa' ? 6 : kind === 'mura' ? 3 : kind === 'terrapieno' ? 1.8 : kind === 'porta' ? 6 : 9);
 }
 
 const OUTLINE = '#1e1a16';
@@ -197,6 +197,7 @@ export function drawBuilding(kind: BuildingKind, c: LookColors, variant = 0): Pi
   if (kind === 'fossato') return drawMoat(variant);
   if (kind === 'bastione') return drawBastion(c, variant);
   if (kind === 'batteria') return drawBattery(c, variant);
+  if (kind === 'porta') return drawGate(variant & 255, variant >= 256, c);
   const wallMask = variant;
   const st = BUILDINGS[kind];
   const W = st.w * TILE_PX;
@@ -434,8 +435,8 @@ export function drawBuilding(kind: BuildingKind, c: LookColors, variant = 0): Pi
  */
 function drawWall(s: PixelSheet, fy: number, mask: number, c: LookColors) {
   const T = TILE_PX;
-  const half = u(2.2); // metà spessore: mura fini
-  const face = u(4); // altezza della parete visibile
+  const half = u(1.3); // metà spessore: mura fini
+  const face = u(3); // altezza della parete visibile
   const top = fy - face;
   const cx = T / 2;
   const cy = T / 2;
@@ -476,7 +477,7 @@ function drawWall(s: PixelSheet, fy: number, mask: number, c: LookColors) {
     for (let x = 0; x < T; x++) {
       const { d, t } = sample(x + 0.5, y + 0.5);
       if (d > half) continue;
-      const rim = d > half - u(0.8);
+      const rim = d > half - u(0.5);
       const merlon = rim && Math.floor(t / u(1.6)) % 2 === 0;
       const stone = hash2(x, y, 8) % 6 === 0 ? STONE_LIGHT : STONE;
       s.set(x, top + y, merlon ? STONE_LIGHT : rim ? shade(STONE, -0.12) : (x + y) % (FINE * 2) === 0 ? STONE_DARK : stone);
@@ -484,6 +485,98 @@ function drawWall(s: PixelSheet, fy: number, mask: number, c: LookColors) {
   }
   // Pilastro isolato o crocevia: uno stendardo.
   if (mask === 0) flag(s, Math.floor(cx), top + cy - u(6), c, u(6));
+}
+
+/**
+ * Porta della cinta: due torri ai lati di un passaggio lastricato con i battenti
+ * aperti. In pietra con le mura (`stone`), di tronchi con i terrapieni. Il
+ * passaggio è perpendicolare ai tratti vicini (`mask`), che si disegnano come bracci.
+ */
+function drawGate(mask: number, stone: boolean, c: LookColors): PixelSheet {
+  const T = TILE_PX;
+  const over = buildingOverhang('porta');
+  const s = new PixelSheet(T, T + over);
+  const fy = over;
+  // Bracci verso i tratti collegati.
+  if (mask) {
+    if (stone) drawWall(s, fy, mask, c);
+    else earthwork(s, fy, mask, buildingOverhang('terrapieno'));
+  }
+  // Muro orizzontale (vicini a est/ovest o solo in diagonale): passaggio nord-sud.
+  const ns = (mask & 0b01000100) !== 0 || (mask & 0b00010001) === 0;
+  const cx = T / 2;
+  const cy = fy + T / 2;
+  const pw = u(5); // larghezza del passaggio
+  const tw = u(5.5); // lato delle torri
+  const H = stone ? u(5) : u(4); // altezza delle torri
+  const top = stone ? STONE : PLANK;
+  const side = stone ? STONE_DARK : WOOD_DARK;
+  const pave = (x: number, y: number) => s.set(x, y, (x + Math.floor(y / FINE)) % FINE === 0 || y % FINE === 0 ? '#8d8270' : hash2(x, y, 12) % 5 === 0 ? '#b9ae98' : '#a99e88');
+
+  const tower = (tx: number, ty: number) => {
+    // `tx, ty`: angolo in alto a sinistra della base; la cima sta H più su.
+    s.rect(tx + u(0.8), ty - H + u(1), tw, tw + H, '#000000', 0.22); // ombra
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < tw; i++) {
+        const joint = stone ? j % FINE === 0 || (i + (Math.floor(j / FINE) % 2) * FINE) % (FINE * 2) === 0 : i % FINE === 0;
+        s.set(tx + i, ty + tw - H + j, joint ? shade(side, -0.2) : side);
+      }
+    }
+    for (let j = 0; j < tw; j++) {
+      for (let i = 0; i < tw; i++) {
+        const rim = i < u(0.6) || j < u(0.6) || i >= tw - u(0.6) || j >= tw - u(0.6);
+        let col = stone ? (hash2(tx + i, j, 7) % 6 === 0 ? STONE_LIGHT : top) : j % FINE === 0 ? WOOD : top;
+        if (rim) col = stone ? (Math.floor((i + j) / u(1.2)) % 2 === 0 ? STONE_LIGHT : shade(STONE, -0.12)) : WOOD_DARK;
+        s.set(tx + i, ty - H + j, col);
+      }
+    }
+    if (stone) {
+      // Piattaforma incassata dietro i merli.
+      s.rect(tx + u(1.1), ty - H + u(1.1), tw - u(2.2), tw - u(2.2), shade(STONE, -0.16));
+      s.rect(tx + u(1.1), ty - H + u(1.1), tw - u(2.2), Math.max(1, Math.round(K / 3)), STONE_DARK);
+    } else {
+      // Tetto a punta della garitta di legno.
+      s.rect(tx + u(1.2), ty - H + u(1.2), tw - u(2.4), tw - u(2.4), '#7a4a2a');
+      s.rect(tx + u(1.2), ty - H + u(1.2), tw - u(2.4), u(0.6), '#9a5e36');
+    }
+  };
+  const leaf = (x: number, y: number, w: number, h: number) => {
+    s.rect(x, y, w, h, WOOD);
+    s.rect(x, y, w, Math.max(1, Math.round(K / 3)), PLANK);
+    for (let k = 0; k < Math.max(w, h); k += FINE) s.set(x + (w > h ? k : 0), y + (w > h ? 0 : k), IRON);
+  };
+
+  if (ns) {
+    for (let y = fy; y < fy + T; y++) for (let x = Math.round(cx - pw / 2); x < Math.round(cx + pw / 2); x++) pave(x, y);
+    // Battenti aperti verso l'interno, ai lati del passaggio.
+    leaf(Math.round(cx - pw / 2), cy - H - u(5), u(0.9), u(3.5));
+    leaf(Math.round(cx + pw / 2) - u(0.9), cy - H - u(5), u(0.9), u(3.5));
+    // Arco sopra il passaggio: camminamento in alto e volta scura sotto.
+    const ax = Math.round(cx - pw / 2);
+    const ay = cy - u(1.5) - H;
+    s.rect(ax, ay, pw, u(3), top);
+    s.rect(ax, ay + u(3), pw, H, side);
+    s.rect(ax + u(0.8), ay + u(3) + u(0.8), pw - u(1.6), H - u(0.8), '#2a221c');
+    leaf(Math.round(cx - pw / 2) + u(0.8), ay + u(3) + u(0.8), u(1), H - u(0.8));
+    tower(Math.round(cx - pw / 2 - tw), cy - Math.round(tw / 2));
+    tower(Math.round(cx + pw / 2), cy - Math.round(tw / 2));
+  } else {
+    for (let y = Math.round(cy - pw / 2); y < Math.round(cy + pw / 2); y++) for (let x = 0; x < T; x++) pave(x, y);
+    leaf(Math.round(cx - u(5)), Math.round(cy - pw / 2), u(3.5), u(0.9));
+    leaf(Math.round(cx - u(5)), Math.round(cy + pw / 2) - u(0.9), u(3.5), u(0.9));
+    // Ponte coperto tra le due torri, rialzato.
+    const by = Math.round(cy - pw / 2) - H;
+    s.rect(Math.round(cx - u(1.5)) + u(0.8), by + u(1), u(3), pw, '#000000', 0.25);
+    s.rect(Math.round(cx - u(1.5)), by, u(3), pw, top);
+    s.rect(Math.round(cx - u(1.5)), by, u(0.6), pw, side);
+    s.rect(Math.round(cx + u(1.5)) - u(0.6), by, u(0.6), pw, side);
+    tower(Math.round(cx - tw / 2), Math.round(cy - pw / 2 - tw));
+    tower(Math.round(cx - tw / 2), Math.round(cy + pw / 2));
+  }
+  // Stendardo sulla porta.
+  flag(s, ns ? Math.round(cx + pw / 2 + tw / 2) : Math.round(cx + tw / 2) - u(1), (ns ? cy - Math.round(tw / 2) : Math.round(cy + pw / 2)) - H - u(6), c, u(6));
+  s.outline(OUTLINE, Math.max(1, Math.round(K / 3)));
+  return s;
 }
 
 /** Cantiere edile: fondamenta, impalcature e materiali. */

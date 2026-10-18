@@ -144,6 +144,14 @@ export class WorldScene extends Phaser.Scene {
 
   /** Variante grafica: giunzioni per le difese a linea, orientamento per bastioni e batterie. */
   private variantOf(kind: BuildingKind, cityId: number, x: number, y: number): number {
+    if (kind === 'porta') {
+      // Porta in pietra se tocca le mura, di legno se sta in un terrapieno.
+      const stone = LINE_DIRS.some(([dx, dy]) => {
+        const b = buildingAtTile(this.state, x + dx, y + dy);
+        return !!b && b.cityId === cityId && b.kind === 'mura';
+      });
+      return this.lineMask(kind, cityId, x, y) + (stone ? 256 : 0);
+    }
     if (BUILDINGS[kind].line) return this.lineMask(kind, cityId, x, y);
     if (kind !== 'bastione' && kind !== 'batteria') return 0;
     const s = BUILDINGS[kind];
@@ -167,12 +175,13 @@ export class WorldScene extends Phaser.Scene {
   /**
    * Giunzioni di una difesa a linea in 8 direzioni (bit come LINE_DIRS). Una giunzione
    * diagonale si usa solo se nessuno dei due lati dritti accanto è già collegato.
-   * Mura e terrapieni si uniscono anche a torri e bastioni; i fossati solo tra loro.
+   * Mura e terrapieni si uniscono anche a torri, bastioni e porte; i fossati solo tra loro.
    */
   private lineMask(kind: BuildingKind, cityId: number, x: number, y: number): number {
     const partners: Record<string, BuildingKind[]> = {
-      mura: ['mura', 'torre', 'bastione'],
-      terrapieno: ['terrapieno', 'torre', 'bastione'],
+      mura: ['mura', 'torre', 'bastione', 'porta'],
+      terrapieno: ['terrapieno', 'torre', 'bastione', 'porta'],
+      porta: ['mura', 'terrapieno', 'torre', 'bastione'],
       fossato: ['fossato'],
     };
     const joins = (dx: number, dy: number) => {

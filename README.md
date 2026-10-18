@@ -38,6 +38,7 @@ una tua città dopo un minuto.
   | --- | --- | --- |
   | Mura | Si tracciano trascinando, anche in diagonale; guarnigione molto più forte | non i pirati |
   | Terrapieno | Argine con palizzata, economico; protegge meno delle mura | tutti |
+  | Porta | In pietra nelle mura, di legno nei terrapieni; si piazza anche sopra un tratto già costruito. Le strade escono dalla cinta solo dalle porte | tutti |
   | Fossato | Canale d'acqua: chi assalta la città combatte peggio | tutti |
   | Torre | Cannoni contro le navi e rinforzo alla guarnigione | tutti |
   | Bastione | Fortificazione a punta con cannoni, rivolta verso l'esterno | non i pirati |

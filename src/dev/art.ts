@@ -50,10 +50,13 @@ if (params.has('terrain')) {
   for (const look of looks) {
     title(look.name);
     for (const cls of SHIP_CLASSES) show(drawShip(cls, look.colors), 1);
-    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => !['mura', 'terrapieno', 'fossato', 'bastione', 'batteria'].includes(k))) show(drawBuilding(kind, look.colors), 1);
+    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => !['mura', 'terrapieno', 'porta', 'fossato', 'bastione', 'batteria'].includes(k))) show(drawBuilding(kind, look.colors), 1);
   }
   title('Mura (tutte le giunzioni)');
   for (const mask of [0, 1, 4, 5, 68, 17, 2 | 64, 1 | 4 | 64, 8 | 128, 2 | 32, 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128, 4 | 64 | 2]) show(drawBuilding('mura', FACTIONS.spagnoli.colors, mask), 1);
+  title('Porte: in pietra (mura) e di legno (terrapieni)');
+  for (const mask of [0, 4 | 64, 1 | 16, 2 | 32]) show(drawBuilding('porta', FACTIONS.inglesi.colors, mask + 256), 1);
+  for (const mask of [0, 4 | 64, 1 | 16]) show(drawBuilding('porta', FACTIONS.pirati.colors, mask), 1);
   title('Fortificazioni: terrapieno, fossato, bastione e batteria (4 orientamenti)');
   for (const mask of [0, 4 | 64, 1 | 4, 2 | 32, 1 | 2 | 4 | 8]) show(drawBuilding('terrapieno', FACTIONS.pirati.colors, mask), 1);
   for (const mask of [0, 4 | 64, 1 | 4, 2 | 32, 1 | 2 | 4 | 8]) show(drawBuilding('fossato', FACTIONS.pirati.colors, mask), 1);

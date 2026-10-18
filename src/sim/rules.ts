@@ -83,12 +83,12 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
 export type BuildingKind =
   | 'municipio' | 'casa' | 'fattoria' | 'pescheria' | 'segheria'
   | 'mercato' | 'cantiere' | 'caserma'
-  | 'torre' | 'mura' | 'terrapieno' | 'fossato' | 'bastione' | 'batteria';
+  | 'torre' | 'mura' | 'terrapieno' | 'porta' | 'fossato' | 'bastione' | 'batteria';
 
 /** Edifici che il giocatore può costruire (il municipio nasce con la città). */
 export const BUILDABLE: readonly BuildingKind[] = [
   'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma',
-  'torre', 'mura', 'terrapieno', 'fossato', 'bastione', 'batteria',
+  'torre', 'mura', 'terrapieno', 'porta', 'fossato', 'bastione', 'batteria',
 ];
 
 export interface BuildingStats {
@@ -138,6 +138,7 @@ export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
   torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2, defense: 0.05, militia: 5 }),
   mura: B({ name: 'Mura', description: 'Mura in pietra: si tracciano trascinando, anche in diagonale. Rendono la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 6, wood: 10 }, buildSeconds: 4, hp: 400, line: true, defense: 0.04, militia: 1.5, factions: ['inglesi', 'francesi', 'spagnoli'] }),
   terrapieno: B({ name: 'Terrapieno', description: 'Argine di terra con palizzata: economico e veloce, protegge meno delle mura. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 2, wood: 6 }, buildSeconds: 3, hp: 250, line: true, defense: 0.025, militia: 1 }),
+  porta: B({ name: 'Porta', description: 'Porta della cinta: in pietra nelle mura, di legno nei terrapieni. Si piazza anche sopra un tratto già costruito, che sostituisce. Le strade escono dalla cinta solo dalle porte.', w: 1, h: 1, cost: { gold: 20, wood: 25 }, buildSeconds: 6, hp: 500, line: true, defense: 0.04, militia: 1.5 }),
   fossato: B({ name: 'Fossato', description: 'Canale d’acqua scavato attorno alla città: gli assalitori che lo devono attraversare combattono peggio. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 4, wood: 2 }, buildSeconds: 5, hp: 600, line: true, moat: 0.025 }),
   bastione: B({ name: 'Bastione', description: 'Fortificazione in pietra a punta, armata di cannoni: spara alle navi e rafforza molto la guarnigione.', w: 2, h: 2, cost: { gold: 220, wood: 260 }, buildSeconds: 30, hp: 1200, damage: 18, range: 7.5, reloadSeconds: 2.4, tier: 2, defense: 0.15, militia: 8, factions: ['inglesi', 'francesi', 'spagnoli'] }),
   batteria: B({ name: 'Batteria costiera', description: 'Piazzola di cannoni pesanti sulla costa: la gittata più lunga, per chiudere l’ingresso del porto.', w: 2, h: 2, cost: { gold: 160, wood: 180 }, buildSeconds: 24, hp: 700, damage: 26, range: 9, reloadSeconds: 3.2, tier: 2, coastal: true, militia: 2 }),
@@ -151,7 +152,7 @@ export const FORTIFICATIONS = {
 };
 
 /** Edifici che contano come difese nel menu costruzioni. */
-export const DEFENSES: readonly BuildingKind[] = ['torre', 'mura', 'terrapieno', 'fossato', 'bastione', 'batteria'];
+export const DEFENSES: readonly BuildingKind[] = ['torre', 'mura', 'terrapieno', 'porta', 'fossato', 'bastione', 'batteria'];
 
 /** Moltiplicatore della segheria con boschi entro 3 caselle. */
 export const FOREST_BONUS = 1.6;

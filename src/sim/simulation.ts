@@ -23,6 +23,8 @@ import {
 import {
   NEUTRAL,
   addBuilding,
+  buildingAtTile,
+  isGateSite,
   addCity,
   buildingCenter,
   buildingOwner,
@@ -286,6 +288,9 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
     case 'placeBuilding': {
       if (buildProblem(state, player, cmd.cityId, cmd.kind, cmd.x, cmd.y)) return;
       pay(state.players[player], BUILDINGS[cmd.kind].cost);
+      // Una porta sostituisce il tratto di cinta su cui viene aperta.
+      const replaced = cmd.kind === 'porta' ? buildingAtTile(state, cmd.x, cmd.y) : undefined;
+      if (replaced && isGateSite(replaced, cmd.cityId)) state.buildings = state.buildings.filter((b) => b !== replaced);
       addBuilding(state, cmd.cityId, cmd.kind, cmd.x, cmd.y, false);
       break;
     }

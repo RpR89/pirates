@@ -86,7 +86,9 @@ export class AIController {
       if (tier >= 2 && count(ring) < 45 && p.wood > 150) {
         const at = this.wallSpot(state, city, ring);
         if (at) {
-          out.push({ type: 'placeBuilding', cityId: city.id, kind: ring, x: at.x, y: at.y });
+          // Porte nei punti cardinali della cinta, così le strade possono uscire.
+          const kind: BuildingKind = at.x === city.cx || at.y === city.cy ? 'porta' : ring;
+          out.push({ type: 'placeBuilding', cityId: city.id, kind, x: at.x, y: at.y });
           return;
         }
       }

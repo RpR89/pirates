@@ -44,7 +44,7 @@ export function BuildMenu({ ctl, city }: { ctl: GameController; city: City }) {
         {effect && <div class="sub gold">{effect}</div>}
         <div class="row spread mt" style={{ marginTop: 4 }}>
           <span class="sub">
-            {s.line ? 'trascina per tracciarlo' : `${s.w}×${s.h} caselle`}{s.coastal ? ' · sulla costa' : ''}
+            {kind === 'porta' ? '1 casella, anche su un tratto di cinta' : s.line ? 'trascina per tracciarlo' : `${s.w}×${s.h} caselle`}{s.coastal ? ' · sulla costa' : ''}
             {locked ? ` · serve ${CITY_TIERS[s.tier - 1].name.toLowerCase()} (${CITY_TIERS[s.tier - 1].population} ab.)` : ''}
           </span>
           <button
@@ -64,7 +64,7 @@ export function BuildMenu({ ctl, city }: { ctl: GameController; city: City }) {
       <h3>Costruisci a {city.name}</h3>
       <div class="sub">
         Scegli un edificio e clicca sulla mappa, entro il cerchio della città. Shift+clic per piazzarne altri;
-        mura, terrapieni e fossati si tracciano tenendo premuto e trascinando. Tasto destro o Esc annulla.
+        mura, terrapieni e fossati si tracciano tenendo premuto e trascinando; le porte si mettono anche sopra un tratto già costruito. Tasto destro o Esc annulla.
       </div>
       <h3>Economia</h3>
       {BUILDABLE.filter((k) => !DEFENSES.includes(k)).map(card)}

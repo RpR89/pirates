@@ -49,12 +49,19 @@ function band(mask: number): (x: number, y: number) => { d: number; t: number } 
 
 /** Terrapieno: argine erboso con la palizzata in cima. */
 export function drawEarthwork(mask: number, overhang: number): PixelSheet {
+  const s = new PixelSheet(TILE_PX, TILE_PX + overhang);
+  earthwork(s, overhang, mask, overhang);
+  s.outline(OUTLINE, LINE_W);
+  return s;
+}
+
+/** Disegna il terrapieno su un foglio esistente; l'impronta inizia a `fy`, il dorso sale di `face`. */
+export function earthwork(s: PixelSheet, fy: number, mask: number, face: number) {
   const T = TILE_PX;
-  const s = new PixelSheet(T, T + overhang);
   const sample = band(mask);
-  const half = u(3.2);
-  const face = overhang;
-  const top = overhang - face;
+  const half = u(2);
+  const top = fy - face;
+  const post = u(1.3);
   // Scarpata esterna (verso sud) in terra battuta.
   for (let y = 0; y < T; y++) {
     for (let x = 0; x < T; x++) {
@@ -71,7 +78,7 @@ export function drawEarthwork(mask: number, overhang: number): PixelSheet {
     for (let x = 0; x < T; x++) {
       const { d } = sample(x + 0.5, y + 0.5);
       if (d > half) continue;
-      const edge = d > half - u(0.9);
+      const edge = d > half - u(0.6);
       const n = hash2(x, y, 9);
       s.set(x, top + y, edge ? (n % 3 ? EARTH : EARTH_DARK) : n % 7 === 0 ? GRASS_DARK : d < half * 0.4 ? shade(GRASS, 0.08) : GRASS);
     }
@@ -82,13 +89,11 @@ export function drawEarthwork(mask: number, overhang: number): PixelSheet {
     for (let x = 0; x < T; x++) {
       const { d, t } = sample(x + 0.5, y + 0.5);
       if (d < LINE_W + 0.5 && Math.round(t) % step === 0) {
-        s.rect(x - Math.floor(LINE_W / 2), top + y - u(1.6), LINE_W + 1, u(1.6), WOOD_DARK);
-        s.set(x, top + y - u(1.6), shade(WOOD, 0.3));
+        s.rect(x - Math.floor(LINE_W / 2), top + y - post, LINE_W + 1, post, WOOD_DARK);
+        s.set(x, top + y - post, shade(WOOD, 0.3));
       }
     }
   }
-  s.outline(OUTLINE, LINE_W);
-  return s;
 }
 
 /** Fossato: canale d'acqua con sponde fangose, un po' incassato nel terreno. */
@@ -96,22 +101,23 @@ export function drawMoat(mask: number): PixelSheet {
   const T = TILE_PX;
   const s = new PixelSheet(T, T);
   const sample = band(mask);
-  const half = u(3);
+  const half = u(1.8);
+  const bankW = u(0.7);
   for (let y = 0; y < T; y++) {
     for (let x = 0; x < T; x++) {
       const { d } = sample(x + 0.5, y + 0.5);
       if (d > half) continue;
-      const bank = d > half - u(1.1);
+      const bank = d > half - bankW;
       const n = hash2(x, y, 5);
       let c: string;
       if (bank) c = n % 4 === 0 ? '#5a4428' : '#735634';
       else {
-        const depth = 1 - d / (half - u(1.1));
+        const depth = 1 - d / (half - bankW);
         c = depth > 0.55 ? '#2a5a6e' : depth > 0.25 ? '#33707e' : '#3f8590';
         if (n % 37 === 0) c = '#6aaab0';
       }
       // L'argine nord fa ombra sull'acqua.
-      if (!bank && sample(x + 0.5, y - u(1.2) + 0.5).d > half - u(1.1)) c = shade(c, -0.25);
+      if (!bank && sample(x + 0.5, y - u(0.8) + 0.5).d > half - bankW) c = shade(c, -0.25);
       s.set(x, y, c);
     }
   }

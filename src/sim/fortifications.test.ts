@@ -98,3 +98,22 @@ describe('difese', () => {
     }
   });
 });
+
+describe('porte', () => {
+  it('una porta si apre sopra un tratto di mura e lo sostituisce', () => {
+    const { state, city } = rich('spagnoli');
+    const at = findPlacement(state, city.id, 'mura')!;
+    run(state, ticks(5), [[1, { type: 'placeBuilding', cityId: city.id, kind: 'mura', x: at.x, y: at.y }]]);
+    const wall = state.buildings.find((b) => b.kind === 'mura' && b.x === at.x && b.y === at.y);
+    expect(wall).toBeDefined();
+    run(state, 1, [[1, { type: 'placeBuilding', cityId: city.id, kind: 'porta', x: at.x, y: at.y }]]);
+    expect(state.buildings.some((b) => b === wall)).toBe(false);
+    expect(state.buildings.find((b) => b.x === at.x && b.y === at.y)?.kind).toBe('porta');
+  });
+
+  it('non si apre sopra altri edifici', () => {
+    const { state, city } = rich('spagnoli');
+    const house = state.buildings.find((b) => b.cityId === city.id && b.kind === 'casa')!;
+    expect(buildProblem(state, 1, city.id, 'porta', house.x, house.y)).toBeTruthy();
+  });
+});

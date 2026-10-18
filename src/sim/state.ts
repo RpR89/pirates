@@ -328,6 +328,11 @@ export function shipyardDock(state: GameState, b: Building): Point {
   return { x: dock.x + 0.5, y: dock.y + 0.5 };
 }
 
+/** Una porta si può aprire sopra un tratto di mura o di terrapieno della stessa città. */
+export function isGateSite(b: Building, cityId: number): boolean {
+  return b.cityId === cityId && (b.kind === 'mura' || b.kind === 'terrapieno');
+}
+
 /** Motivo per cui non si può costruire qui, o null se si può. */
 export function placementProblem(
   state: GameState,
@@ -349,7 +354,8 @@ export function placementProblem(
       const tx = x + i;
       const ty = y + j;
       if (distance({ x: tx + 0.5, y: ty + 0.5 }, center) > CITY.radius) return 'Troppo lontano dal municipio';
-      if (buildingAtTile(state, tx, ty)) return 'Spazio occupato';
+      const occupant = buildingAtTile(state, tx, ty);
+      if (occupant && !(kind === 'porta' && isGateSite(occupant, cityId))) return 'Spazio occupato';
       if (!isLand(state.map, tx, ty)) return 'Serve terraferma';
       if (tileAt(state.map, tx, ty) === Tile.Rock) return 'Terreno roccioso';
     }

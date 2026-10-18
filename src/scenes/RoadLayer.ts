@@ -37,7 +37,9 @@ export class RoadLayer {
       seen.add(city.id);
       const cobbled = cityTier(city) >= 2;
       const buildings = cityBuildings(state, city.id).filter((b) => isComplete(b) && !BUILDINGS[b.kind].line);
-      const signature = `${cobbled}|${buildings.map((b) => `${b.x},${b.y}`).join(';')}`;
+      // Anche la cinta conta: mura e terrapieni fermano le strade, porte e fossati no.
+      const walls = cityBuildings(state, city.id).filter((b) => BUILDINGS[b.kind].line);
+      const signature = `${cobbled}|${buildings.map((b) => `${b.x},${b.y}`).join(';')}|${walls.map((b) => `${b.kind[0]}${b.x},${b.y}`).join(';')}`;
       const current = this.roads.get(city.id);
       if (current?.signature === signature) continue;
       current?.images.forEach((i) => i.destroy());
@@ -47,6 +49,8 @@ export class RoadLayer {
       }));
       const images: Phaser.GameObjects.Image[] = [];
       for (const p of tiles.values()) {
+        // Sotto porte e fossati non si disegna, ma la strada ci arriva fino al bordo.
+        if (p.gate) continue;
         const mask = (tiles.has(`${p.x},${p.y - 1}`) ? 1 : 0) | (tiles.has(`${p.x + 1},${p.y}`) ? 2 : 0) | (tiles.has(`${p.x},${p.y + 1}`) ? 4 : 0) | (tiles.has(`${p.x - 1},${p.y}`) ? 8 : 0);
         images.push(this.scene.add.image(p.x * TILE_PX, p.y * TILE_PX, this.texture(mask, cobbled)).setOrigin(0, 0).setDepth(5));
       }
@@ -61,13 +65,14 @@ export class RoadLayer {
   }
 
   /** Caselle di strada: percorsi minimi dalle porte alla piazza (ricerca in ampiezza). */
-  private network(state: GameState, city: City, doors: Point[]): Map<string, Point> {
+  private network(state: GameState, city: City, doors: Point[]): Map<string, Point & { gate: boolean }> {
     const map = state.map;
     const r = CITY.radius + 1;
-    // Le strade attraversano mura, terrapieni e fossati (porte e ponti), senza disegnarci sopra.
+    // Le strade escono dalla cinta solo dalle porte e passano i fossati sui ponti,
+    // mura e terrapieni le fermano.
     const gate = (x: number, y: number) => {
       const b = buildingAtTile(state, x, y);
-      return !!b && BUILDINGS[b.kind].line;
+      return !!b && (b.kind === 'porta' || b.kind === 'fossato');
     };
     const free = (x: number, y: number) =>
       isLand(map, x, y) && tileAt(map, x, y) !== Tile.Rock && (!buildingAtTile(state, x, y) || gate(x, y)) &&
@@ -98,7 +103,7 @@ export class RoadLayer {
         queue.push({ x: nx, y: ny });
       }
     }
-    const out = new Map<string, Point>();
+    const out = new Map<string, Point & { gate: boolean }>();
     let linked = 0;
     for (const door of doors) {
       // Se la porta è occupata, cerca una casella libera accanto.
@@ -113,7 +118,7 @@ export class RoadLayer {
       if (start) linked++;
       for (let k = start; k !== null && !out.has(k); k = parent.get(k) ?? null) {
         const [x, y] = k.split(',').map(Number);
-        if (!gate(x, y)) out.set(k, { x, y });
+        out.set(k, { x, y, gate: gate(x, y) });
       }
     }
     this.connected.set(city.id, { doors: doors.length, linked });
