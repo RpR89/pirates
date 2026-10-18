@@ -6,6 +6,7 @@ import { drawBuilding, drawConstruction } from '../render/buildingArt';
 import { drawShip } from '../render/shipArt';
 import { renderChunk, waterDistanceField } from '../render/terrain';
 import { drawPortrait } from '../render/portrait';
+import { drawRoad } from '../render/roadArt';
 import type { PixelSheet } from '../render/pixels';
 
 const params = new URLSearchParams(location.search);
@@ -49,10 +50,18 @@ if (params.has('terrain')) {
   for (const look of looks) {
     title(look.name);
     for (const cls of SHIP_CLASSES) show(drawShip(cls, look.colors), 1);
-    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => k !== 'mura')) show(drawBuilding(kind, look.colors), 1);
+    for (const kind of (Object.keys(BUILDINGS) as BuildingKind[]).filter((k) => !['mura', 'terrapieno', 'fossato', 'bastione', 'batteria'].includes(k))) show(drawBuilding(kind, look.colors), 1);
   }
   title('Mura (tutte le giunzioni)');
   for (const mask of [0, 1, 4, 5, 68, 17, 2 | 64, 1 | 4 | 64, 8 | 128, 2 | 32, 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128, 4 | 64 | 2]) show(drawBuilding('mura', FACTIONS.spagnoli.colors, mask), 1);
+  title('Fortificazioni: terrapieno, fossato, bastione e batteria (4 orientamenti)');
+  for (const mask of [0, 4 | 64, 1 | 4, 2 | 32, 1 | 2 | 4 | 8]) show(drawBuilding('terrapieno', FACTIONS.pirati.colors, mask), 1);
+  for (const mask of [0, 4 | 64, 1 | 4, 2 | 32, 1 | 2 | 4 | 8]) show(drawBuilding('fossato', FACTIONS.pirati.colors, mask), 1);
+  for (let dir = 0; dir < 4; dir++) show(drawBuilding('bastione', FACTIONS.inglesi.colors, dir), 1);
+  for (let dir = 0; dir < 4; dir++) show(drawBuilding('batteria', FACTIONS.spagnoli.colors, dir), 1);
+  title('Strade');
+  for (const mask of [5, 10, 15, 6, 3, 7]) show(drawRoad(mask, false), 1);
+  for (const mask of [5, 10, 15, 6, 3, 7]) show(drawRoad(mask, true), 1);
   title('Capitani');
   for (const id of FACTION_IDS) for (let uni = 0; uni < 3; uni++) for (let seed = 1; seed <= 2; seed++) show(drawPortrait(seed * 7919 + id.length + uni, id, uni), 1.5);
   title('In costruzione');

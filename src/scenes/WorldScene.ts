@@ -1,12 +1,14 @@
 import Phaser from 'phaser';
 import type { GameController } from '../game/controller';
 import type { Keyboard } from '../game/keyboard';
-import { WALL_DIRS, drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
+import { drawBuilding, drawConstruction, buildingOverhang } from '../render/buildingArt';
+import { LINE_DIRS } from '../render/fortArt';
 import { toNumber } from '../render/color';
 import { drawShip } from '../render/shipArt';
 import { TILE_PX } from '../render/terrain';
 import { TerrainStreamer } from '../render/terrainStreamer';
 import { SiegeLayer } from './SiegeLayer';
+import { RoadLayer } from './RoadLayer';
 import { FACTIONS } from '../sim/factions';
 import { isLand, type Point } from '../sim/map';
 import { BUILDINGS, CITY, SHIPS, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
@@ -15,6 +17,7 @@ import {
   NEUTRAL,
   buildingAtTile,
   buildingOwner,
+  footprintDock,
   foundingProblem,
   getCity,
   isEnemy,
@@ -61,6 +64,7 @@ export class WorldScene extends Phaser.Scene {
   private keyboard!: Keyboard;
   private terrain!: TerrainStreamer;
   private siege!: SiegeLayer;
+  roads!: RoadLayer;
   private ships = new Map<number, ShipVisual>();
   private buildings = new Map<number, BuildingVisual>();
   private overlay!: Phaser.GameObjects.Graphics;
@@ -93,6 +97,7 @@ export class WorldScene extends Phaser.Scene {
     const { map } = this.state;
     this.terrain = new TerrainStreamer(this, map, this.state.seed);
     this.siege = new SiegeLayer(this, () => this.state);
+    this.roads = new RoadLayer(this, () => this.state);
     this.events.once('shutdown', () => this.terrain.destroy());
     this.events.once('destroy', () => this.terrain.destroy());
     this.ships.clear();
@@ -134,20 +139,48 @@ export class WorldScene extends Phaser.Scene {
       if (!this.textures.exists(key)) this.textures.addCanvas(key, drawConstruction(s.w, s.h).toCanvas());
       return key;
     }
-    return this.kindTexture(b.kind, buildingOwner(this.state, b), b.kind === 'mura' ? this.wallMask(b) : 0);
+    return this.kindTexture(b.kind, buildingOwner(this.state, b), this.variantOf(b.kind, b.cityId, b.x, b.y));
+  }
+
+  /** Variante grafica: giunzioni per le difese a linea, orientamento per bastioni e batterie. */
+  private variantOf(kind: BuildingKind, cityId: number, x: number, y: number): number {
+    if (BUILDINGS[kind].line) return this.lineMask(kind, cityId, x, y);
+    if (kind !== 'bastione' && kind !== 'batteria') return 0;
+    const s = BUILDINGS[kind];
+    const center = { x: x + s.w / 2, y: y + s.h / 2 };
+    let toward: Point | null = null;
+    if (kind === 'bastione') {
+      // La punta del bastione guarda fuori dalla città.
+      const city = getCity(this.state, cityId);
+      if (city) toward = { x: 2 * center.x - (city.cx + 0.5), y: 2 * center.y - (city.cy + 0.5) };
+    } else {
+      // I cannoni della batteria guardano il mare.
+      const dock = footprintDock(this.state.map, x, y, s.w, s.h);
+      if (dock) toward = { x: dock.x + 0.5, y: dock.y + 0.5 };
+    }
+    if (!toward) return 0;
+    const dx = toward.x - center.x;
+    const dy = toward.y - center.y;
+    return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
   }
 
   /**
-   * Giunzioni di un tratto di mura in 8 direzioni (bit come WALL_DIRS). Una giunzione
+   * Giunzioni di una difesa a linea in 8 direzioni (bit come LINE_DIRS). Una giunzione
    * diagonale si usa solo se nessuno dei due lati dritti accanto è già collegato.
+   * Mura e terrapieni si uniscono anche a torri e bastioni; i fossati solo tra loro.
    */
-  private wallMask(b: Building): number {
+  private lineMask(kind: BuildingKind, cityId: number, x: number, y: number): number {
+    const partners: Record<string, BuildingKind[]> = {
+      mura: ['mura', 'torre', 'bastione'],
+      terrapieno: ['terrapieno', 'torre', 'bastione'],
+      fossato: ['fossato'],
+    };
     const joins = (dx: number, dy: number) => {
-      const other = buildingAtTile(this.state, b.x + dx, b.y + dy);
-      return !!other && other.cityId === b.cityId && (other.kind === 'mura' || other.kind === 'torre');
+      const other = buildingAtTile(this.state, x + dx, y + dy);
+      return !!other && other.cityId === cityId && partners[kind].includes(other.kind);
     };
     let mask = 0;
-    WALL_DIRS.forEach(([dx, dy], i) => {
+    LINE_DIRS.forEach(([dx, dy], i) => {
       if (!joins(dx, dy)) return;
       if (dx !== 0 && dy !== 0 && (joins(dx, 0) || joins(0, dy))) return;
       mask |= 1 << i;
@@ -155,9 +188,9 @@ export class WorldScene extends Phaser.Scene {
     return mask;
   }
 
-  private kindTexture(kind: BuildingKind, owner: PlayerId, mask = 0): string {
-    const key = `bld-${kind}-${lookId(this.state, owner)}${kind === 'mura' ? `-${mask}` : ''}`;
-    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawBuilding(kind, look(this.state, owner).colors, mask).toCanvas());
+  private kindTexture(kind: BuildingKind, owner: PlayerId, variant = 0): string {
+    const key = `bld-${kind}-${lookId(this.state, owner)}-${variant}`;
+    if (!this.textures.exists(key)) this.textures.addCanvas(key, drawBuilding(kind, look(this.state, owner).colors, variant).toCanvas());
     return key;
   }
 
@@ -188,7 +221,7 @@ export class WorldScene extends Phaser.Scene {
         return;
       }
       if (this.ctl.mode.type === 'place') {
-        if (this.ctl.mode.kind === 'mura') this.wallStart = { ...this.pointerTile };
+        if (BUILDINGS[this.ctl.mode.kind].line) this.wallStart = { ...this.pointerTile };
         else this.placeAt(p.event.shiftKey);
         return;
       }
@@ -377,6 +410,7 @@ export class WorldScene extends Phaser.Scene {
     this.ctl.session.advance(delta);
     const events = this.ctl.session.drainEvents();
     this.ctl.cleanSelection();
+    this.roads.update(time);
     this.syncBuildings(time);
     this.syncShips(time);
     this.playEvents(events);
@@ -711,12 +745,13 @@ export class WorldScene extends Phaser.Scene {
   private placeWalls(a: Point, b: Point): void {
     const mode = this.ctl.mode;
     if (mode.type !== 'place') return;
-    const tiles = this.wallLine(a, b).filter((t) => !buildProblem(this.state, this.ctl.me, mode.cityId, 'mura', t.x, t.y));
+    const kind = mode.kind;
+    const tiles = this.wallLine(a, b).filter((t) => !buildProblem(this.state, this.ctl.me, mode.cityId, kind, t.x, t.y));
     if (!tiles.length) {
-      this.ctl.message(buildProblem(this.state, this.ctl.me, mode.cityId, 'mura', b.x, b.y) ?? 'Qui non si possono costruire mura', 'bad');
+      this.ctl.message(buildProblem(this.state, this.ctl.me, mode.cityId, kind, b.x, b.y) ?? 'Qui non si può costruire', 'bad');
       return;
     }
-    for (const t of tiles) this.ctl.issue({ type: 'placeBuilding', cityId: mode.cityId, kind: 'mura', x: t.x, y: t.y });
+    for (const t of tiles) this.ctl.issue({ type: 'placeBuilding', cityId: mode.cityId, kind, x: t.x, y: t.y });
   }
 
   private updateGhost(): void {
@@ -725,15 +760,15 @@ export class WorldScene extends Phaser.Scene {
       this.ghost.setVisible(false);
       return;
     }
-    if (mode.kind === 'mura') {
+    if (BUILDINGS[mode.kind].line) {
       // Anteprima del tratto: verde dove si può costruire, rosso altrove.
       this.ghost.setVisible(false);
       const g = this.overlay;
       const me = this.state.players[this.ctl.me];
       let budget = { gold: me.gold, wood: me.wood };
       for (const t of this.wallLine(this.wallStart ?? this.pointerTile, this.pointerTile)) {
-        const cost = BUILDINGS.mura.cost;
-        const ok = !placementProblem(this.state, this.ctl.me, mode.cityId, 'mura', t.x, t.y) && budget.gold >= cost.gold && budget.wood >= cost.wood;
+        const cost = BUILDINGS[mode.kind].cost;
+        const ok = !placementProblem(this.state, this.ctl.me, mode.cityId, mode.kind, t.x, t.y) && budget.gold >= cost.gold && budget.wood >= cost.wood;
         if (ok) budget = { gold: budget.gold - cost.gold, wood: budget.wood - cost.wood };
         g.fillStyle(ok ? 0x7dff7d : 0xff5a4a, 0.35).fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
         g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 0.9).strokeRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
@@ -744,7 +779,7 @@ export class WorldScene extends Phaser.Scene {
     const s = BUILDINGS[mode.kind];
     const ok = !buildProblem(this.state, this.ctl.me, mode.cityId, mode.kind, at.x, at.y);
     this.ghost
-      .setTexture(this.kindTexture(mode.kind, this.ctl.me))
+      .setTexture(this.kindTexture(mode.kind, this.ctl.me, this.variantOf(mode.kind, mode.cityId, at.x, at.y)))
       .setOrigin(0, 1)
       .setPosition(at.x * TILE_PX, (at.y + s.h) * TILE_PX)
       .setAlpha(0.75)

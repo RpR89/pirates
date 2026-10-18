@@ -10,6 +10,8 @@
 - Grafica procedurale in `src/render/` con `TILE_PX` = 72 px per casella: navi, edifici, mura, soldati e ritratti disegnati con `PixelSheet` e scalati da `TILE_PX`. `npm run dev` → `/art.html` mostra la galleria di tutti gli sprite.
 - Il terreno non sta tutto in memoria: `TerrainStreamer` lo genera a blocchi vicino alla visuale in Web Worker (`terrainWorker.ts`), scarta quelli lontani e mostra sotto un'anteprima a bassa risoluzione. Zoom a livelli fissi (0.2–1), filtro lineare.
 - Sbarchi e assedi sono animati da `src/scenes/SiegeLayer.ts`, che segue lo stato della simulazione (solo grafica).
+- Le difese sono edifici con `defense`/`militia`/`moat` in `rules.ts`, sommati da `fortifications()` in `simulation.ts`; quelle a linea (`line: true`) si tracciano trascinando e si disegnano con le giunzioni in 8 direzioni (`fortArt.ts`). Bastioni e batterie sono orientati dalla scena (verso l'esterno / verso il mare).
+- Le strade (`src/scenes/RoadLayer.ts`) sono solo grafica: percorsi minimi dalle porte degli edifici alla piazza. `findPlacement()` (IA e città iniziali) lascia libere le caselle davanti alle porte.
 - `src/game/controller.ts` collega sessione, scena e menu (selezione, modalità di piazzamento/sbarco, messaggi).
 - Test Vitest accanto ai file in `src/sim/` (`*.test.ts`); helper in `src/sim/testing.ts`.
 - `?debug` espone `window.game` e `window.ctl`; `?autostart&faction=pirati&seed=42&rivals=2` salta il menu (test end-to-end con Playwright).

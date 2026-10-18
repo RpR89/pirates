@@ -374,10 +374,25 @@ export function findPlacement(state: GameState, cityId: number, kind: BuildingKi
     const db = distance({ x: b.x + s.w / 2, y: b.y + s.h / 2 }, c);
     return da - db || a.y - b.y || a.x - b.x;
   });
-  // Lascia un passaggio libero attorno al municipio.
+  // Lascia un passaggio libero attorno al municipio e la strada davanti alle porte.
   const m = municipioOf(state, cityId);
+  const doors = new Set(
+    cityBuildings(state, cityId)
+      .filter((b) => !BUILDINGS[b.kind].line)
+      .map((b) => `${b.x + Math.floor(BUILDINGS[b.kind].w / 2)},${b.y + BUILDINGS[b.kind].h}`),
+  );
+  const coversDoor = (p: Point) => {
+    for (let j = 0; j < s.h; j++) for (let i = 0; i < s.w; i++) if (doors.has(`${p.x + i},${p.y + j}`)) return true;
+    return false;
+  };
   for (const p of candidates) {
     if (m && p.x + s.w > m.x - 1 && p.x < m.x + 4 && p.y + s.h > m.y - 1 && p.y < m.y + 4) continue;
+    if (!s.line) {
+      if (coversDoor(p)) continue;
+      // La propria porta deve affacciarsi su una casella libera (non serve agli edifici sulla costa).
+      const door = { x: p.x + Math.floor(s.w / 2), y: p.y + s.h };
+      if (!s.coastal && !buildableTile(state, door.x, door.y)) continue;
+    }
     if (!placementProblem(state, city.owner, cityId, kind, p.x, p.y)) return p;
   }
   return null;

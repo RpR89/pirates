@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WALLS, ticks } from './rules';
+import { BUILDINGS, FORTIFICATIONS, ticks } from './rules';
 import { boardingStrength, cityProduction, garrisonStrength } from './simulation';
 import { NEUTRAL, cityBuildings, heroOf, spawnShip, type GameState } from './state';
 import { home, newGame, run } from './testing';
@@ -38,7 +38,7 @@ describe('mura', () => {
     run(state, ticks(10));
     const walls = cityBuildings(state, city.id).filter((b) => b.kind === 'mura').length;
     expect(walls).toBeGreaterThan(3);
-    expect(garrisonStrength(state, city)).toBeCloseTo(before * (1 + Math.min(WALLS.maxDefense, walls * WALLS.defensePerSegment)), 5);
+    expect(garrisonStrength(state, city)).toBeCloseTo(before * (1 + Math.min(FORTIFICATIONS.maxDefense, walls * BUILDINGS.mura.defense)), 5);
   });
 });
 

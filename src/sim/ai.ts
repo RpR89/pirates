@@ -76,14 +76,17 @@ export class AIController {
       if (!count('caserma')) wants.push('caserma');
       if (tier >= 2 && count('mercato') < 1) wants.push('mercato');
       if (tier >= 2 && count('torre') < 2) wants.push('torre');
+      if (tier >= 2 && count('batteria') < 1) wants.push('batteria');
+      if (tier >= 3 && count('bastione') < 2) wants.push('bastione');
       if (tight && count('casa') < 14) wants.push('casa');
       if (tier >= 3 && count('mercato') < 2) wants.push('mercato');
       if (count('fattoria') + count('pescheria') < 2 + Math.floor(city.population / 60)) wants.push('pescheria', 'fattoria');
-      const canWall = BUILDINGS.mura.factions?.includes(p.faction!) ?? true;
-      if (canWall && tier >= 2 && count('mura') < 40 && p.wood > 150) {
-        const at = this.wallSpot(state, city);
+      // Cinta difensiva: mura in pietra, o terrapieni per chi non può costruirle.
+      const ring: BuildingKind = BUILDINGS.mura.factions?.includes(p.faction!) ? 'mura' : 'terrapieno';
+      if (tier >= 2 && count(ring) < 45 && p.wood > 150) {
+        const at = this.wallSpot(state, city, ring);
         if (at) {
-          out.push({ type: 'placeBuilding', cityId: city.id, kind: 'mura', x: at.x, y: at.y });
+          out.push({ type: 'placeBuilding', cityId: city.id, kind: ring, x: at.x, y: at.y });
           return;
         }
       }
@@ -208,7 +211,7 @@ export class AIController {
   }
 
   /** Un tratto di mura libero sull'anello attorno al municipio. */
-  private wallSpot(state: GameState, city: City): Point | null {
+  private wallSpot(state: GameState, city: City, kind: BuildingKind): Point | null {
     const spots: Point[] = [];
     const r = CITY.radius * 0.7;
     for (let y = city.cy - CITY.radius; y <= city.cy + CITY.radius; y++) {
@@ -218,7 +221,7 @@ export class AIController {
       }
     }
     spots.sort((a, b) => a.y - b.y || a.x - b.x);
-    return spots.find((p) => !buildProblem(state, this.player, city.id, 'mura', p.x, p.y)) ?? null;
+    return spots.find((p) => !buildProblem(state, this.player, city.id, kind, p.x, p.y)) ?? null;
   }
 
   private chooseTarget(state: GameState, fleet: Ship[]): City | null {

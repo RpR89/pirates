@@ -11,7 +11,7 @@ import {
   FOREST_BONUS,
   RECRUIT,
   SHIPS,
-  WALLS,
+  FORTIFICATIONS,
   TICK_RATE,
   UNITS,
   ticks,
@@ -403,28 +403,49 @@ function updateCity(state: GameState, city: City): void {
   if (city.siege) resolveAssault(state, city);
 }
 
-function towersAlive(state: GameState, city: City): number {
-  return cityBuildings(state, city.id).filter((b) => b.kind === 'torre' && isComplete(b) && b.hp > 0).length;
+export interface Fortifications {
+  /** Moltiplicatore della guarnigione (difese e capitano). */
+  defense: number;
+  /** Forza fissa delle difese (si somma alla milizia). */
+  militia: number;
+  /** Indebolimento degli assalitori dovuto ai fossati (0..maxMoat). */
+  moat: number;
+  /** Quanti edifici difensivi completi e integri ci sono, per tipo. */
+  count: Partial<Record<BuildingKind, number>>;
 }
 
-export function wallsAlive(state: GameState, city: City): number {
-  return cityBuildings(state, city.id).filter((b) => b.kind === 'mura' && isComplete(b) && b.hp > 0).length;
-}
-
-/** Moltiplicatore della guarnigione dato da mura e capitano. */
-export function defenseMultiplier(state: GameState, city: City): number {
-  const walls = 1 + Math.min(WALLS.maxDefense, wallsAlive(state, city) * WALLS.defensePerSegment);
+/** Riepilogo delle difese di una città. */
+export function fortifications(state: GameState, city: City): Fortifications {
+  let defense = 0;
+  let militia = 0;
+  let moat = 0;
+  const count: Partial<Record<BuildingKind, number>> = {};
+  for (const b of cityBuildings(state, city.id)) {
+    if (!isComplete(b) || b.hp <= 0) continue;
+    const s = BUILDINGS[b.kind];
+    if (s.defense === 0 && s.militia === 0 && s.moat === 0) continue;
+    defense += s.defense;
+    militia += s.militia;
+    moat += s.moat;
+    count[b.kind] = (count[b.kind] ?? 0) + 1;
+  }
   const hero = heroInCity(state, city.id);
-  return walls * (hero ? heroCityBonus(hero).defense : 1);
+  return {
+    defense: (1 + Math.min(FORTIFICATIONS.maxDefense, defense)) * (hero ? heroCityBonus(hero).defense : 1),
+    militia,
+    moat: Math.min(FORTIFICATIONS.maxMoat, moat),
+    count,
+  };
 }
 
-/** Forza difensiva di milizia cittadina, torri e mura (non subisce perdite). */
+/** Moltiplicatore della guarnigione dato da difese e capitano. */
+export function defenseMultiplier(state: GameState, city: City): number {
+  return fortifications(state, city).defense;
+}
+
+/** Forza difensiva di milizia cittadina e difese (non subisce perdite). */
 export function militiaStrength(state: GameState, city: City): number {
-  return (
-    city.population * CITY.militiaPerCitizen +
-    towersAlive(state, city) * CITY.towerGarrisonBonus +
-    wallsAlive(state, city) * WALLS.militiaPerSegment
-  );
+  return city.population * CITY.militiaPerCitizen + fortifications(state, city).militia;
 }
 
 export function garrisonStrength(state: GameState, city: City): number {
@@ -436,7 +457,8 @@ export function garrisonStrength(state: GameState, city: City): number {
 function resolveAssault(state: GameState, city: City): void {
   const siege = city.siege!;
   const attMods = modifiers(state, siege.owner);
-  const attPower = UNITS.soldiers.power * attMods.soldierPower;
+  // Chi deve attraversare i fossati combatte peggio.
+  const attPower = UNITS.soldiers.power * attMods.soldierPower * (1 - fortifications(state, city).moat);
   const att = siege.soldiers * attPower;
   const garrison = garrisonStrength(state, city);
   const militia = militiaStrength(state, city);

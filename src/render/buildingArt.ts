@@ -3,6 +3,7 @@ import { hash2, shade } from './color';
 import { PixelSheet } from './pixels';
 import type { LookColors } from './shipArt';
 import { TILE_PX } from './terrain';
+import { LINE_DIRS, drawBastion, drawBattery, drawEarthwork, drawMoat } from './fortArt';
 
 /**
  * I disegni sono pensati in "unità di riferimento" (16 per casella) e scalati a
@@ -16,7 +17,8 @@ const FINE = Math.max(3, Math.round(K * 0.9));
 
 /** Pixel extra sopra l'impronta, per tetti e torri che "salgono". */
 export function buildingOverhang(kind: BuildingKind): number {
-  return u(kind === 'torre' ? 14 : kind === 'municipio' ? 14 : kind === 'casa' ? 6 : kind === 'mura' ? 4 : 9);
+  if (kind === 'fossato' || kind === 'bastione' || kind === 'batteria') return 0;
+  return u(kind === 'torre' ? 14 : kind === 'municipio' ? 14 : kind === 'casa' ? 6 : kind === 'mura' ? 4 : kind === 'terrapieno' ? 2.5 : 9);
 }
 
 const OUTLINE = '#1e1a16';
@@ -186,7 +188,16 @@ function figure(s: PixelSheet, x: number, y: number, uniform: string, hat: strin
 }
 
 /** Disegna un edificio completo. L'impronta occupa la parte bassa dello sprite. */
-export function drawBuilding(kind: BuildingKind, c: LookColors, wallMask = 0): PixelSheet {
+/**
+ * `variant`: giunzioni per le difese a linea (mura, terrapieni, fossati) oppure
+ * orientamento (0 N, 1 E, 2 S, 3 O) per bastioni e batterie.
+ */
+export function drawBuilding(kind: BuildingKind, c: LookColors, variant = 0): PixelSheet {
+  if (kind === 'terrapieno') return drawEarthwork(variant, buildingOverhang(kind));
+  if (kind === 'fossato') return drawMoat(variant);
+  if (kind === 'bastione') return drawBastion(c, variant);
+  if (kind === 'batteria') return drawBattery(c, variant);
+  const wallMask = variant;
   const st = BUILDINGS[kind];
   const W = st.w * TILE_PX;
   const over = buildingOverhang(kind);
@@ -416,8 +427,6 @@ export function drawBuilding(kind: BuildingKind, c: LookColors, wallMask = 0): P
   return s;
 }
 
-/** Direzioni delle giunzioni delle mura: N, NE, E, SE, S, SO, O, NO (bit 0..7). */
-export const WALL_DIRS: readonly [number, number][] = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
 
 /**
  * Tratto di mura sottile che si collega ai vicini in 8 direzioni: un camminamento
@@ -431,7 +440,7 @@ function drawWall(s: PixelSheet, fy: number, mask: number, c: LookColors) {
   const cx = T / 2;
   const cy = T / 2;
   const segs: [number, number][] = [];
-  WALL_DIRS.forEach(([dx, dy], i) => {
+  LINE_DIRS.forEach(([dx, dy], i) => {
     if (mask & (1 << i)) segs.push([cx + dx * T * 0.5, cy + dy * T * 0.5]);
   });
 

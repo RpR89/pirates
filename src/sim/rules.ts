@@ -82,11 +82,13 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
 
 export type BuildingKind =
   | 'municipio' | 'casa' | 'fattoria' | 'pescheria' | 'segheria'
-  | 'mercato' | 'cantiere' | 'caserma' | 'torre' | 'mura';
+  | 'mercato' | 'cantiere' | 'caserma'
+  | 'torre' | 'mura' | 'terrapieno' | 'fossato' | 'bastione' | 'batteria';
 
 /** Edifici che il giocatore può costruire (il municipio nasce con la città). */
 export const BUILDABLE: readonly BuildingKind[] = [
-  'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma', 'torre', 'mura',
+  'casa', 'fattoria', 'pescheria', 'segheria', 'mercato', 'cantiere', 'caserma',
+  'torre', 'mura', 'terrapieno', 'fossato', 'bastione', 'batteria',
 ];
 
 export interface BuildingStats {
@@ -110,10 +112,18 @@ export interface BuildingStats {
   reloadSeconds: number;
   /** Se presente, solo queste fazioni possono costruirlo. */
   factions?: readonly FactionId[];
+  /** Si traccia trascinando, una casella alla volta (mura, terrapieni, fossati). */
+  line: boolean;
+  /** Difese: quanto aumenta la forza della guarnigione negli assedi (somma, con un massimo). */
+  defense: number;
+  /** Difese: forza fissa che resiste agli assalitori senza subire perdite. */
+  militia: number;
+  /** Fossati: quanto indebolisce gli assalitori (somma, con un massimo). */
+  moat: number;
 }
 
 const B = (s: Partial<BuildingStats> & Pick<BuildingStats, 'name' | 'description' | 'w' | 'h' | 'cost' | 'buildSeconds' | 'hp'>): BuildingStats => ({
-  coastal: false, tier: 1, housing: 0, food: 0, wood: 0, gold: 0, damage: 0, range: 0, reloadSeconds: 0, ...s,
+  coastal: false, tier: 1, housing: 0, food: 0, wood: 0, gold: 0, damage: 0, range: 0, reloadSeconds: 0, line: false, defense: 0, militia: 0, moat: 0, ...s,
 });
 
 export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
@@ -125,18 +135,23 @@ export const BUILDINGS: Record<BuildingKind, BuildingStats> = {
   mercato: B({ name: 'Mercato', description: 'Commercio e dazi: produce oro.', w: 2, h: 2, cost: { gold: 80, wood: 80 }, buildSeconds: 15, hp: 180, gold: 1.2, tier: 2 }),
   cantiere: B({ name: 'Cantiere navale', description: 'Costruisce le navi. Va sulla costa.', w: 2, h: 2, cost: { gold: 100, wood: 120 }, buildSeconds: 18, hp: 250, coastal: true }),
   caserma: B({ name: 'Caserma', description: 'Arruola marinai e soldati tra gli abitanti.', w: 2, h: 2, cost: { gold: 100, wood: 80 }, buildSeconds: 15, hp: 300 }),
-  mura: B({ name: 'Mura', description: 'Tratto di mura in pietra: si piazza trascinando. Rende la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 6, wood: 10 }, buildSeconds: 4, hp: 400, factions: ['inglesi', 'francesi', 'spagnoli'] }),
-  torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2 }),
+  torre: B({ name: 'Torre di difesa', description: 'Cannoni contro le navi nemiche e rinforzo per la guarnigione.', w: 1, h: 1, cost: { gold: 90, wood: 110 }, buildSeconds: 15, hp: 350, damage: 10, range: 6, reloadSeconds: 2, tier: 2, defense: 0.05, militia: 5 }),
+  mura: B({ name: 'Mura', description: 'Mura in pietra: si tracciano trascinando, anche in diagonale. Rendono la guarnigione molto più forte negli assedi.', w: 1, h: 1, cost: { gold: 6, wood: 10 }, buildSeconds: 4, hp: 400, line: true, defense: 0.04, militia: 1.5, factions: ['inglesi', 'francesi', 'spagnoli'] }),
+  terrapieno: B({ name: 'Terrapieno', description: 'Argine di terra con palizzata: economico e veloce, protegge meno delle mura. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 2, wood: 6 }, buildSeconds: 3, hp: 250, line: true, defense: 0.025, militia: 1 }),
+  fossato: B({ name: 'Fossato', description: 'Canale d’acqua scavato attorno alla città: gli assalitori che lo devono attraversare combattono peggio. Si traccia trascinando.', w: 1, h: 1, cost: { gold: 4, wood: 2 }, buildSeconds: 5, hp: 600, line: true, moat: 0.025 }),
+  bastione: B({ name: 'Bastione', description: 'Fortificazione in pietra a punta, armata di cannoni: spara alle navi e rafforza molto la guarnigione.', w: 2, h: 2, cost: { gold: 220, wood: 260 }, buildSeconds: 30, hp: 1200, damage: 18, range: 7.5, reloadSeconds: 2.4, tier: 2, defense: 0.15, militia: 8, factions: ['inglesi', 'francesi', 'spagnoli'] }),
+  batteria: B({ name: 'Batteria costiera', description: 'Piazzola di cannoni pesanti sulla costa: la gittata più lunga, per chiudere l’ingresso del porto.', w: 2, h: 2, cost: { gold: 160, wood: 180 }, buildSeconds: 24, hp: 700, damage: 26, range: 9, reloadSeconds: 3.2, tier: 2, coastal: true, militia: 2 }),
 };
 
-export const WALLS = {
-  /** Ogni tratto di mura aumenta la forza della guarnigione di questa frazione... */
-  defensePerSegment: 0.04,
-  /** ...fino a questo massimo. */
-  maxDefense: 1.2,
-  /** Forza difensiva fissa di ogni tratto (come la milizia: non subisce perdite). */
-  militiaPerSegment: 1.5,
+export const FORTIFICATIONS = {
+  /** Massimo aumento della forza della guarnigione dato dalle difese. */
+  maxDefense: 1.5,
+  /** Massimo indebolimento degli assalitori dato dai fossati. */
+  maxMoat: 0.5,
 };
+
+/** Edifici che contano come difese nel menu costruzioni. */
+export const DEFENSES: readonly BuildingKind[] = ['torre', 'mura', 'terrapieno', 'fossato', 'bastione', 'batteria'];
 
 /** Moltiplicatore della segheria con boschi entro 3 caselle. */
 export const FOREST_BONUS = 1.6;
@@ -152,15 +167,14 @@ export const CITY_TIERS = [
 
 export const CITY = {
   /** Gli edifici devono stare entro questa distanza dal centro del municipio. */
-  radius: 10,
+  radius: 13,
   /** Distanza minima tra i centri di due città. */
-  minDistance: 26,
+  minDistance: 32,
   taxPerCitizen: 0.02, // oro al secondo per abitante
   growthBase: 0.1, // abitanti al secondo
   growthPerCitizen: 0.0015,
   starvationLoss: 0.15, // abitanti al secondo persi senza cibo
   militiaPerCitizen: 0.15, // forza difensiva degli abitanti
-  towerGarrisonBonus: 5,
   capturePopulationLoss: 0.2,
   regenDelaySeconds: 10,
   regenPerSecond: 4,

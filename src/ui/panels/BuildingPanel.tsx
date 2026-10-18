@@ -1,8 +1,8 @@
 import { useState } from 'preact/hooks';
 import type { GameController } from '../../game/controller';
 import { FACTIONS } from '../../sim/factions';
-import { BUILDINGS, CITY, CITY_TIERS, FOOD, TICK_RATE, ticks } from '../../sim/rules';
-import { cityProduction, defenseMultiplier, garrisonStrength, militiaStrength, playerBalance, wallsAlive } from '../../sim/simulation';
+import { BUILDINGS, CITY, CITY_TIERS, DEFENSES, FOOD, TICK_RATE, ticks } from '../../sim/rules';
+import { cityProduction, fortifications, garrisonStrength, militiaStrength, playerBalance } from '../../sim/simulation';
 import { heroCityBonus } from '../../sim/hero';
 import {
   NEUTRAL,
@@ -19,7 +19,7 @@ import {
 import { Bar, Stat } from '../common';
 import { fmt, rate } from '../hooks';
 import { BarracksPanel } from './BarracksPanel';
-import { BuildMenu } from './BuildMenu';
+import { BuildMenu, defenseSummary } from './BuildMenu';
 import { ShipyardPanel } from './ShipyardPanel';
 
 export function BuildingPanel({ ctl, building }: { ctl: GameController; building: Building }) {
@@ -68,7 +68,7 @@ export function BuildingPanel({ ctl, building }: { ctl: GameController; building
           {s.housing > 0 && <Stat label="Alloggi">{s.housing} abitanti</Stat>}
         </div>
       )}
-      {building.kind === 'torre' && <div class="sub mt">Cannoni: {s.damage} danni, gittata {s.range}. Ogni torre rinforza la difesa della città negli assalti.</div>}
+      {DEFENSES.includes(building.kind) && <div class="sub gold mt">{defenseSummary(building.kind)}</div>}
 
       <div class="mt">
         <button class={showBuild ? 'active' : ''} onClick={() => setShowBuild(!showBuild)}>
@@ -129,9 +129,7 @@ function CityOverview({ ctl, city }: { ctl: GameController; city: City }) {
       {heroInCity(state, city.id) && (
         <div class="card mt gold">★ Il capitano {heroInCity(state, city.id)!.name} è qui: difesa della guarnigione {`+${Math.round((heroCityBonus(heroInCity(state, city.id)!).defense - 1) * 100)}%`}.</div>
       )}
-      {wallsAlive(state, city) > 0 && (
-        <div class="sub mt">Mura: {wallsAlive(state, city)} tratti, guarnigione +{Math.round((defenseMultiplier(state, city) / (heroInCity(state, city.id) ? heroCityBonus(heroInCity(state, city.id)!).defense : 1) - 1) * 100)}% negli assedi.</div>
-      )}
+      <Defenses ctl={ctl} city={city} />
       {city.siege && (
         <div class="card bad mt">
           Assedio! {Math.ceil(city.siege.soldiers)} soldati di {state.players[city.siege.owner].name} contro la guarnigione.
@@ -172,6 +170,24 @@ function ForeignCity({ ctl, city, building }: { ctl: GameController; city: City;
         degli abitanti ({fmt(city.population * CITY.militiaPerCitizen)}) e le torri resistono finché gli assalitori non sono abbastanza.
       </div>
       {city.siege && <div class="card mt">Assedio in corso: {Math.ceil(city.siege.soldiers)} soldati di {state.players[city.siege.owner].name}.</div>}
+    </div>
+  );
+}
+
+/** Riepilogo delle difese della città. */
+function Defenses({ ctl, city }: { ctl: GameController; city: City }) {
+  const f = fortifications(ctl.state, city);
+  const kinds = Object.entries(f.count) as [keyof typeof BUILDINGS, number][];
+  if (!kinds.length) return <div class="sub mt">Nessuna difesa: costruisci mura, terrapieni, fossati, torri, bastioni o batterie costiere.</div>;
+  return (
+    <div>
+      <h3>Difese</h3>
+      <div class="sub">{kinds.map(([k, n]) => `${BUILDINGS[k].name} ${n > 1 ? `×${n}` : ''}`).join(' · ')}</div>
+      <div class="grid2">
+        <Stat label="Guarnigione">+{Math.round((f.defense - 1) * 100)}%</Stat>
+        <Stat label="Forza fissa">{fmt(f.militia)}</Stat>
+        {f.moat > 0 && <Stat label="Assalitori">−{Math.round(f.moat * 100)}%</Stat>}
+      </div>
     </div>
   );
 }

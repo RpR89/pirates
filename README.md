@@ -29,9 +29,19 @@ una tua città dopo un minuto.
 - **Città.** Clicca sul municipio per il menu della città. Con *Costruisci* scegli
   un edificio e lo piazzi tu, dove vuoi, entro il cerchio della città: case
   (abitanti), fattorie e pescherie (cibo), segheria (legno), mercato (oro),
-  cantiere navale, caserma, torri di difesa e mura (tranne i pirati: si tracciano
-  trascinando, anche in diagonale, e rendono la guarnigione molto più forte).
-  Cantiere e pescheria vanno sulla costa.
+  cantiere navale e caserma. Cantiere e pescheria vanno sulla costa. Le strade
+  si tracciano da sole: collegano ogni edificio alla piazza del municipio
+  (sterrate nei villaggi, acciottolate nei paesi e nelle città).
+- **Difese.** Si costruiscono anche queste:
+
+  | Difesa | Effetto | Chi |
+  | --- | --- | --- |
+  | Mura | Si tracciano trascinando, anche in diagonale; guarnigione molto più forte | non i pirati |
+  | Terrapieno | Argine con palizzata, economico; protegge meno delle mura | tutti |
+  | Fossato | Canale d'acqua: chi assalta la città combatte peggio | tutti |
+  | Torre | Cannoni contro le navi e rinforzo alla guarnigione | tutti |
+  | Bastione | Fortificazione a punta con cannoni, rivolta verso l'esterno | non i pirati |
+  | Batteria costiera | Cannoni pesanti puntati sul mare, gittata più lunga: chiude il porto | tutti |
 - **Popolazione e cibo.** Gli abitanti crescono se c'è cibo e posto nelle case,
   e pagano le tasse. Abitanti e uomini mangiano: in carestia la gente se ne va e
   gli uomini disertano. A 35 abitanti la città diventa *paese*, a 80 *città*:

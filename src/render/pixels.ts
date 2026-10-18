@@ -80,6 +80,27 @@ export class PixelSheet {
     for (const [x, y] of add) this.set(x, y, color);
   }
 
+  /** Copia ruotata di 90° in senso orario `times` volte (solo fogli quadrati). */
+  rotated(times: number): PixelSheet {
+    const t = ((times % 4) + 4) % 4;
+    if (t === 0) return this;
+    const n = this.width;
+    const out = new PixelSheet(n, n);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        let sx = x;
+        let sy = y;
+        if (t === 1) { sx = y; sy = n - 1 - x; }
+        else if (t === 2) { sx = n - 1 - x; sy = n - 1 - y; }
+        else { sx = n - 1 - y; sy = x; }
+        const si = (sy * n + sx) * 4;
+        const di = (y * n + x) * 4;
+        for (let k = 0; k < 4; k++) out.data[di + k] = this.data[si + k];
+      }
+    }
+    return out;
+  }
+
   toCanvas(): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.width = this.width;
