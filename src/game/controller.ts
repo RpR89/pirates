@@ -11,9 +11,11 @@ import { serializeGame } from '../sim/save';
 import type { SaveFile } from './saves';
 import {
   createGame,
+  getArmy,
   getBuilding,
   getCity,
   getShip,
+  type Army,
   type Building,
   type City,
   type GameEvent,
@@ -37,6 +39,8 @@ export type Selection =
   | { kind: 'none' }
   | { kind: 'ships'; ids: number[] }
   | { kind: 'ship'; id: number } // nave altrui, solo informazioni
+  | { kind: 'armies'; ids: number[] } // reparti a terra del giocatore
+  | { kind: 'army'; id: number } // reparto altrui
   | { kind: 'building'; id: number };
 
 export type Mode =
@@ -158,6 +162,13 @@ export class GameController {
     return sel.ids.map((id) => getShip(this.state, id)).filter((s): s is Ship => !!s && s.owner === this.me);
   }
 
+  /** Reparti a terra selezionati che appartengono al giocatore. */
+  selectedArmies(): Army[] {
+    const sel = this.selection;
+    if (sel.kind !== 'armies') return [];
+    return sel.ids.map((id) => getArmy(this.state, id)).filter((a): a is Army => !!a && a.owner === this.me);
+  }
+
   selectedBuilding(): Building | null {
     const sel = this.selection;
     return sel.kind === 'building' ? getBuilding(this.state, sel.id) ?? null : null;
@@ -197,6 +208,8 @@ export class GameController {
   stopSelected(): void {
     const ids = this.selectedShips().map((s) => s.id);
     if (ids.length) this.issue({ type: 'stop', shipIds: ids });
+    const armies = this.selectedArmies().map((a) => a.id);
+    if (armies.length) this.issue({ type: 'armyStop', armyIds: armies });
   }
 
   goHome(): void {
@@ -213,6 +226,11 @@ export class GameController {
     if (sel.kind === 'ships') {
       const ids = this.selectedShips().map((s) => s.id);
       if (ids.length !== sel.ids.length) this.selection = ids.length ? { kind: 'ships', ids } : { kind: 'none' };
+    } else if (sel.kind === 'armies') {
+      const ids = this.selectedArmies().map((a) => a.id);
+      if (ids.length !== sel.ids.length) this.selection = ids.length ? { kind: 'armies', ids } : { kind: 'none' };
+    } else if (sel.kind === 'army' && !getArmy(this.state, sel.id)) {
+      this.selection = { kind: 'none' };
     } else if (sel.kind === 'ship' && !getShip(this.state, sel.id)) {
       this.selection = { kind: 'none' };
     } else if (sel.kind === 'building' && !getBuilding(this.state, sel.id)) {
@@ -255,6 +273,12 @@ export class GameController {
             const goods = [e.wood ? `${e.wood} legno` : '', e.food ? `${e.food} cibo` : ''].filter(Boolean).join(' e ');
             this.message(`${ship?.name ?? 'La nave'} ha venduto ${goods} a ${cityName(e.cityId)}: +${Math.floor(e.gold)} oro`, 'good');
           }
+          break;
+        case 'armyLanded':
+          if (e.owner === me) this.message(`Sbarcati ${e.soldiers} soldati: selezionali e guidali con il clic destro`, 'info');
+          break;
+        case 'armyLost':
+          if (e.owner === me) this.message('Un nostro reparto a terra è stato annientato!', 'bad');
           break;
         case 'recruited':
           if (e.owner === me) this.message(`${e.count} ${e.unit === 'sailors' ? 'marinai' : 'soldati'} arruolati a ${cityName(e.cityId)}`, 'info');

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { GameController } from '../../game/controller';
 import { FACTIONS, MAX_NAME_LENGTH } from '../../sim/factions';
-import { SHIPS } from '../../sim/rules';
-import { boardingStrength, dockedCity } from '../../sim/simulation';
+import { REPAIR, SHIPS } from '../../sim/rules';
+import { boardingStrength, dockedCity, repairRate } from '../../sim/simulation';
 import { crewEfficiency, getBuilding, getCity, getShip, shipMaxHp, shipMen, type Ship } from '../../sim/state';
 import { Bar, Stat } from '../common';
 import { HeroShipActions } from '../HeroCard';
@@ -22,6 +22,7 @@ function orderText(ctl: GameController, s: Ship): string {
     }
     case 'land': return `Sbarco a ${getCity(state, o.cityId)?.name ?? '—'}`;
     case 'found': return 'Verso il sito della nuova città';
+    case 'disembark': return 'Verso la costa per lo sbarco';
     case 'trade': {
       const r = s.route;
       const stop = r?.stops[r.next];
@@ -55,7 +56,7 @@ export function ShipsPanel({ ctl, ships }: { ctl: GameController; ships: Ship[] 
       )}
 
       <h3>Ordini</h3>
-      <div class="sub">Clic destro: muovi, attacca una nave, bombarda un edificio{ships.some((s) => s.colonists) ? ', o fonda una città su una costa libera' : ''}.</div>
+      <div class="sub">Clic destro: muovi, attacca una nave, bombarda un edificio{ships.some((s) => s.colonists) ? ', o fonda una città su una costa libera' : ''}. Con <b>Sbarca truppe</b> scegli una costa qualsiasi: i soldati scendono a terra e li guidi come le navi.</div>
       <div class="row wrap mt">
         <button class={ctl.boarding ? 'active' : ''} onClick={() => ctl.toggleBoarding()} title="B">
           Arrembaggio: {ctl.boarding ? 'sì' : 'no'}
@@ -103,6 +104,14 @@ function SingleShip({ ctl, ship }: { ctl: GameController; ship: Ship }) {
         <Stat label="Scafo">{fmt(ship.hp)}/{max}</Stat>
         <Bar value={ship.hp / max} />
       </div>
+      {repairRate(state, ship) > 0 ? (
+        <div class="sub gold">
+          In riparazione al molo: +{fmt(repairRate(state, ship))} scafo/s, {(REPAIR.woodPerHp * repairRate(state, ship)).toLocaleString('it-IT', { maximumFractionDigits: 1 })} legno/s
+          {state.players[ctl.me].wood < 1 ? ' — manca il legno!' : ''}
+        </div>
+      ) : (
+        ship.hp < max && <div class="sub">Ferma la nave nel porto di una tua città per ripararla (più veloce al cantiere navale).</div>
+      )}
       <div class="grid2 mt">
         <Stat label={faction.sailors}>{fmt(ship.sailors)}/{s.crew}</Stat>
         <Stat label="Soldati">{fmt(ship.soldiers)}</Stat>

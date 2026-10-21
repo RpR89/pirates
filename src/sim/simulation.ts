@@ -1,12 +1,15 @@
 import type { Command, PlayerCommand } from './commands';
 import { sanitizeName } from './factions';
 import { HERO, heroCityBonus, heroLevel, heroShipBonus, type Hero } from './hero';
-import { Tile, nearestSea, tileAt, type Point } from './map';
+import { Tile, isWalkable, nearestSea, nearestWalkable, tileAt, type Point } from './map';
 import { findPath } from './pathfinding';
+import { applyArmyCommand, armyHostileToCity, landArmy, updateArmies } from './armies';
 import {
+  ARMY,
   BUILDINGS,
   CITY,
   COMBAT,
+  REPAIR,
   FOOD,
   FOREST_BONUS,
   RECRUIT,
@@ -80,6 +83,7 @@ export function step(state: GameState, commands: readonly PlayerCommand[]): void
   for (const city of state.cities) updateCity(state, city);
   for (const b of state.buildings) updateBuilding(state, b, ctx);
   for (const ship of state.ships) updateShip(state, ship, ctx);
+  updateArmies(state);
   removeSunkShips(state, ctx);
   removeDestroyedBuildings(state);
   updateHeroes(state);
@@ -163,6 +167,7 @@ export function playerBalance(state: GameState, player: PlayerId): Income & { fo
     foodUse += c.population * FOOD.perCitizen + (c.garrison.sailors + c.garrison.soldiers) * FOOD.perMan;
   }
   for (const s of state.ships) if (s.owner === player) foodUse += (shipMen(s) + s.colonists) * FOOD.perMan;
+  for (const a of state.armies) if (a.owner === player) foodUse += a.soldiers * FOOD.perMan;
   return { ...total, food: total.food - foodUse, foodUse };
 }
 
@@ -237,6 +242,7 @@ export function dockedCity(state: GameState, ship: Ship): City | null {
 
 function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
   if (!state.players[player]?.alive) return;
+  if (applyArmyCommand(state, player, cmd)) return;
   switch (cmd.type) {
     case 'move':
       ownedShips(state, player, cmd.shipIds).forEach((ship, i) => {
@@ -354,6 +360,16 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
       const [ship] = ownedShips(state, player, [cmd.shipId]);
       const name = sanitizeName(cmd.name);
       if (ship && name) ship.name = name;
+      break;
+    }
+    case 'disembark': {
+      if (!isWalkable(state.map, Math.floor(cmd.x), Math.floor(cmd.y))) return;
+      for (const ship of ownedShips(state, player, cmd.shipIds)) {
+        if (ship.soldiers < 1) continue;
+        ship.order = { type: 'disembark', x: cmd.x, y: cmd.y };
+        ship.path = [];
+        ship.repath = 0;
+      }
       break;
     }
     case 'setRoute': {
@@ -540,6 +556,7 @@ function updateEconomy(state: GameState, p: Player): void {
     };
     for (const c of state.cities) if (c.owner === p.id) desert(c.garrison);
     for (const s of state.ships) if (s.owner === p.id) desert(s);
+    for (const a of state.armies) if (a.owner === p.id) a.soldiers = Math.max(0, a.soldiers - Math.max(1, Math.round(a.soldiers * FOOD.desertionShare)));
   }
 }
 
@@ -718,9 +735,20 @@ function buildingFire(state: GameState, b: Building, city: City, ctx: TickContex
       bestD = d;
     }
   }
-  if (!target) return;
   const hero = heroInCity(state, city.id);
-  target.hp -= stats.damage * modifiers(state, city.owner).cannonDamage * (hero ? heroCityBonus(hero).towers : 1);
+  const damage = stats.damage * modifiers(state, city.owner).cannonDamage * (hero ? heroCityBonus(hero).towers : 1);
+  if (!target) {
+    // Nessuna nave a tiro: i cannoni sparano sui reparti nemici a terra.
+    const army = state.armies
+      .filter((a) => a.soldiers > 0 && armyHostileToCity(a, city) && distance(center, a) <= stats.range)
+      .sort((p, q) => distance(center, p) - distance(center, q) || p.id - q.id)[0];
+    if (!army) return;
+    army.soldiers -= damage * ARMY.menPerDamage;
+    b.cooldown = ticks(stats.reloadSeconds);
+    state.events.push({ type: 'shot', from: center, to: { x: army.x, y: army.y } });
+    return;
+  }
+  target.hp -= damage;
   b.cooldown = ticks(stats.reloadSeconds);
   state.events.push({ type: 'shot', from: center, to: { x: target.x, y: target.y } });
   if (target.hp <= 0 && !ctx.sunkBy.has(target.id)) ctx.sunkBy.set(target.id, city.owner);
@@ -736,6 +764,34 @@ function removeDestroyedBuildings(state: GameState): void {
 }
 
 // ================================================================ navi
+
+/** Punti scafo riparati al secondo se la nave è ferma nel porto di una sua città (0 altrimenti). */
+export function repairRate(state: GameState, ship: Ship): number {
+  const max = shipMaxHp(state, ship);
+  if (ship.hp >= max || ship.path.length > 0) return 0;
+  let best = 0;
+  for (const c of state.cities) {
+    if (c.owner !== ship.owner) continue;
+    if (distance(ship, { x: c.dock.x + 0.5, y: c.dock.y + 0.5 }) <= COMBAT.dockRange) best = Math.max(best, 1);
+    for (const b of state.buildings) {
+      if (b.cityId === c.id && b.kind === 'cantiere' && isComplete(b) && distance(ship, shipyardDock(state, b)) <= COMBAT.dockRange) {
+        best = REPAIR.shipyardBonus;
+      }
+    }
+  }
+  return max * REPAIR.perSecond * best;
+}
+
+/** Un secondo di riparazione in porto, pagata in legno. */
+function repairShip(state: GameState, ship: Ship): void {
+  const rate = repairRate(state, ship);
+  if (rate <= 0) return;
+  const player = state.players[ship.owner];
+  const heal = Math.min(rate, shipMaxHp(state, ship) - ship.hp, player.wood / REPAIR.woodPerHp);
+  if (heal <= 0) return;
+  ship.hp += heal;
+  player.wood -= heal * REPAIR.woodPerHp;
+}
 
 function chase(state: GameState, ship: Ship, goal: Point): void {
   if (ship.repath > 0 && ship.path.length > 0) {
@@ -865,9 +921,34 @@ function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {
     case 'trade':
       updateTrade(state, ship);
       break;
+    case 'disembark': {
+      if (ship.soldiers < 1) {
+        idle(ship);
+        break;
+      }
+      const target = { x: order.x, y: order.y };
+      // Il tratto di mare più vicino al punto scelto: lì si calano le scialuppe.
+      const sea = nearestSea(state.map, target.x, target.y, 8);
+      if (!sea) {
+        idle(ship);
+        break;
+      }
+      const anchor = { x: sea.x + 0.5, y: sea.y + 0.5 };
+      if (distance(ship, target) <= ARMY.landingRange || distance(ship, anchor) <= 1) {
+        // Le scialuppe portano i soldati sulla terra più vicina alla nave.
+        const at = nearestWalkable(state.map, ship.x, ship.y, 4);
+        if (at) landArmy(state, ship, { x: at.x + 0.5, y: at.y + 0.5 });
+        idle(ship);
+      } else {
+        chase(state, ship, anchor);
+        if (ship.path.length === 0) idle(ship); // costa irraggiungibile
+      }
+      break;
+    }
   }
 
   moveAlongPath(state, ship);
+  if (ship.path.length === 0 && (state.tick + ship.id) % TICK_RATE === 0) repairShip(state, ship);
   if (ship.cooldown > 0) ship.cooldown--;
   if (stats.damage > 0 && ship.cooldown === 0) shipFire(state, ship, ctx);
 }
@@ -1029,7 +1110,7 @@ function checkElimination(state: GameState): void {
   const contenders = state.players.filter((p) => p.id !== NEUTRAL);
   for (const p of contenders) {
     if (!p.alive) continue;
-    const hasAny = state.cities.some((c) => c.owner === p.id) || state.ships.some((s) => s.owner === p.id);
+    const hasAny = state.cities.some((c) => c.owner === p.id) || state.ships.some((s) => s.owner === p.id) || state.armies.some((a) => a.owner === p.id);
     if (!hasAny) {
       p.alive = false;
       state.events.push({ type: 'playerEliminated', player: p.id });

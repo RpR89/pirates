@@ -10,7 +10,7 @@ import { TerrainStreamer } from '../render/terrainStreamer';
 import { SiegeLayer } from './SiegeLayer';
 import { RoadLayer } from './RoadLayer';
 import { FACTIONS } from '../sim/factions';
-import { isLand, type Point } from '../sim/map';
+import { isLand, isWalkable, type Point } from '../sim/map';
 import { BUILDINGS, CITY, SHIPS, SUB, ticks, type BuildingKind, type ShipClass } from '../sim/rules';
 import { buildProblem } from '../sim/simulation';
 import {
@@ -29,6 +29,7 @@ import {
   type GameState,
   type PlayerId,
   type Ship,
+  type Army,
 } from '../sim/state';
 
 interface ShipVisual {
@@ -39,6 +40,14 @@ interface ShipVisual {
   angle: number;
   owner: PlayerId;
   wakeAt: number;
+}
+
+interface ArmyVisual {
+  figures: Phaser.GameObjects.Image[];
+  prev: Point;
+  cur: Point;
+  owner: PlayerId;
+  facing: 1 | -1;
 }
 
 interface BuildingVisual {
@@ -66,6 +75,8 @@ export class WorldScene extends Phaser.Scene {
   private siege!: SiegeLayer;
   roads!: RoadLayer;
   private ships = new Map<number, ShipVisual>();
+  private armies = new Map<number, ArmyVisual>();
+  private lastArmyTick = -1;
   private buildings = new Map<number, BuildingVisual>();
   private overlay!: Phaser.GameObjects.Graphics;
   private ghost!: Phaser.GameObjects.Image;
@@ -102,6 +113,7 @@ export class WorldScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.terrain.destroy());
     this.events.once('destroy', () => this.terrain.destroy());
     this.ships.clear();
+    this.armies.clear();
     this.buildings.clear();
     this.lastTick = -1;
 
@@ -314,6 +326,12 @@ export class WorldScene extends Phaser.Scene {
       this.ctl.select({ kind: 'ships', ids: [...new Set([...current, ship.id])] });
     } else if (ship) {
       this.ctl.select({ kind: 'ship', id: ship.id });
+    } else if (this.armyAt(wx, wy)) {
+      const army = this.armyAt(wx, wy)!;
+      if (army.owner === me) {
+        const current = this.ctl.selection.kind === 'armies' && additive ? this.ctl.selection.ids : [];
+        this.ctl.select({ kind: 'armies', ids: [...new Set([...current, army.id])] });
+      } else this.ctl.select({ kind: 'army', id: army.id });
     } else {
       const b = this.buildingAt(wx, wy);
       if (b) this.ctl.select({ kind: 'building', id: b.id });
@@ -332,10 +350,54 @@ export class WorldScene extends Phaser.Scene {
       .map((s) => s.id);
     const current = this.ctl.selection.kind === 'ships' && additive ? this.ctl.selection.ids : [];
     const all = [...new Set([...current, ...ids])];
-    this.ctl.select(all.length ? { kind: 'ships', ids: all } : { kind: 'none' });
+    if (all.length) {
+      this.ctl.select({ kind: 'ships', ids: all });
+      return;
+    }
+    // Nessuna nave nel riquadro: si selezionano i reparti a terra.
+    const armies = this.state.armies
+      .filter((ar) => ar.owner === this.ctl.me && ar.x * TILE_PX >= x0 && ar.x * TILE_PX <= x1 && ar.y * TILE_PX >= y0 && ar.y * TILE_PX <= y1)
+      .map((ar) => ar.id);
+    const currentArmies = this.ctl.selection.kind === 'armies' && additive ? this.ctl.selection.ids : [];
+    const allArmies = [...new Set([...currentArmies, ...armies])];
+    this.ctl.select(allArmies.length ? { kind: 'armies', ids: allArmies } : { kind: 'none' });
+  }
+
+  /** Clic destro con dei reparti a terra selezionati. */
+  private armyOrderAt(wx: number, wy: number): void {
+    const ids = this.ctl.selectedArmies().map((a) => a.id);
+    const me = this.ctl.me;
+    const enemy = this.armyAt(wx, wy);
+    if (enemy && isEnemy(me, enemy.owner)) {
+      this.ctl.issue({ type: 'armyAttack', armyIds: ids, targetId: enemy.id });
+      this.marker(wx, wy, 0xff5a4a);
+      return;
+    }
+    const ship = this.shipAt(wx, wy);
+    if (ship && ship.owner === me) {
+      this.ctl.issue({ type: 'armyEmbark', armyIds: ids, shipId: ship.id });
+      this.marker(wx, wy, 0x7dd3ff);
+      return;
+    }
+    const b = this.buildingAt(wx, wy);
+    const city = b && getCity(this.state, b.cityId);
+    if (city) {
+      this.ctl.issue({ type: 'armyCity', armyIds: ids, cityId: city.id });
+      this.marker(wx, wy, city.owner === me ? 0x7dff7d : 0xffcd75);
+      return;
+    }
+    const tx = wx / TILE_PX;
+    const ty = wy / TILE_PX;
+    if (!isWalkable(this.state.map, Math.floor(tx), Math.floor(ty))) {
+      this.ctl.message('I soldati vanno a piedi: scegli un punto di terra (per salire a bordo, clic destro su una tua nave).', 'info');
+      return;
+    }
+    this.ctl.issue({ type: 'armyMove', armyIds: ids, x: tx, y: ty });
+    this.marker(wx, wy, 0xffffff);
   }
 
   private orderAt(wx: number, wy: number): void {
+    if (this.ctl.selectedArmies().length) return this.armyOrderAt(wx, wy);
     const ships = this.ctl.selectedShips();
     if (!ships.length) return;
     const ids = ships.map((s) => s.id);
@@ -373,10 +435,20 @@ export class WorldScene extends Phaser.Scene {
     const b = this.buildingAt(wx, wy);
     const city = b && getCity(this.state, b.cityId);
     const ships = this.ctl.selectedShips().filter((s) => s.soldiers >= 1);
-    if (!city || city.owner === this.ctl.me) {
-      this.ctl.message('Scegli una città nemica o neutrale su cui sbarcare.', 'info');
+    if (ships.length && (!city || city.owner === this.ctl.me)) {
+      // Sbarco su una costa qualsiasi: i soldati diventano un reparto a terra.
+      const tx = wx / TILE_PX;
+      const ty = wy / TILE_PX;
+      if (!isWalkable(this.state.map, Math.floor(tx), Math.floor(ty))) {
+        this.ctl.message('Scegli un punto di terra vicino alla costa, o una città nemica da assaltare.', 'info');
+        return;
+      }
+      this.ctl.issue({ type: 'disembark', shipIds: ships.map((s) => s.id), x: tx, y: ty });
+      this.ctl.setMode({ type: 'normal' });
+      this.marker(wx, wy, 0xffcd75);
       return;
     }
+    if (!city) return;
     if (!ships.length) {
       this.ctl.message('Nessuna nave selezionata ha soldati a bordo.', 'bad');
       this.ctl.setMode({ type: 'normal' });
@@ -424,6 +496,7 @@ export class WorldScene extends Phaser.Scene {
     this.roads.update(time);
     this.syncBuildings(time);
     this.syncShips(time);
+    this.syncArmies(time);
     this.playEvents(events);
     this.siege.handleEvents(events);
     this.siege.update(time, delta, (x, y, c, n, spread) => this.puff(x, y, c, n, spread));
@@ -477,6 +550,73 @@ export class WorldScene extends Phaser.Scene {
         this.buildings.delete(id);
       }
     }
+  }
+
+  /** Reparti a terra: un gruppetto di soldati (una figura ogni ~10 uomini) che marcia. */
+  private syncArmies(time: number): void {
+    const state = this.state;
+    const tickChanged = state.tick !== this.lastArmyTick;
+    this.lastArmyTick = state.tick;
+    const alpha = Math.min(1, this.ctl.session.alpha);
+    const seen = new Set<number>();
+    for (const a of state.armies) {
+      seen.add(a.id);
+      let vis = this.armies.get(a.id);
+      if (!vis || vis.owner !== a.owner) {
+        vis?.figures.forEach((f) => f.destroy());
+        vis = { figures: [], prev: { x: a.x, y: a.y }, cur: { x: a.x, y: a.y }, owner: a.owner, facing: 1 };
+        this.armies.set(a.id, vis);
+      }
+      if (tickChanged) {
+        vis.prev = vis.cur;
+        vis.cur = { x: a.x, y: a.y };
+      }
+      const want = Math.max(1, Math.min(7, Math.ceil(a.soldiers / 10)));
+      const key = this.siege.lookKey(a.owner);
+      while (vis.figures.length < want) vis.figures.push(this.add.image(0, 0, `${key}-0`).setOrigin(0.5, 1));
+      while (vis.figures.length > want) vis.figures.pop()!.destroy();
+      const x = (vis.prev.x + (vis.cur.x - vis.prev.x) * alpha) * TILE_PX;
+      const y = (vis.prev.y + (vis.cur.y - vis.prev.y) * alpha) * TILE_PX;
+      const dx = vis.cur.x - vis.prev.x;
+      const moving = Math.abs(dx) + Math.abs(vis.cur.y - vis.prev.y) > 0.001;
+      if (Math.abs(dx) > 0.001) vis.facing = dx > 0 ? 1 : -1;
+      vis.figures.forEach((f, i) => {
+        // Formazione a rombo attorno al centro del reparto.
+        const row = Math.floor((i + 1) / 2);
+        const side = i === 0 ? 0 : i % 2 ? -1 : 1;
+        const fx = x + side * row * 9 * S - (row % 2) * 3 * S;
+        const fy = y + (row - 1) * 5 * S;
+        const step = moving ? Math.floor((time + i * 130) / 220) % 2 : 0;
+        f.setTexture(`${key}-${step}`).setScale(1.4).setPosition(fx, fy).setFlipX(vis!.facing < 0).setDepth(40 + fy / 100000);
+      });
+    }
+    for (const [id, vis] of this.armies) {
+      if (seen.has(id)) continue;
+      vis.figures.forEach((f) => f.destroy());
+      this.armies.delete(id);
+    }
+  }
+
+  private armyPos(id: number): Point | null {
+    const v = this.armies.get(id);
+    if (!v?.figures.length) return null;
+    const a = this.state.armies.find((x) => x.id === id);
+    return a ? { x: a.x * TILE_PX, y: a.y * TILE_PX } : null;
+  }
+
+  private armyAt(wx: number, wy: number): Army | null {
+    let best: Army | null = null;
+    let bestD = TILE_PX * 0.7;
+    for (const a of this.state.armies) {
+      const p = this.armyPos(a.id);
+      if (!p) continue;
+      const d = Math.hypot(p.x - wx, p.y - TILE_PX * 0.15 - wy);
+      if (d < bestD) {
+        best = a;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   private syncShips(time: number): void {
@@ -583,6 +723,26 @@ export class WorldScene extends Phaser.Scene {
   private playEvents(events: GameEvent[]): void {
     for (const e of events) {
       switch (e.type) {
+        case 'armyLanded': {
+          // Scialuppe dalla nave alla riva.
+          const boats = Math.max(1, Math.min(4, Math.ceil(e.soldiers / 12)));
+          for (let i = 0; i < boats; i++) {
+            const off = (i - (boats - 1) / 2) * TILE_PX * 0.35;
+            const boat = this.add.image(e.from.x * TILE_PX + off, e.from.y * TILE_PX, this.siege.boatKey(e.owner)).setDepth(35);
+            boat.setRotation(Math.atan2(e.to.y - e.from.y, e.to.x - e.from.x) + Math.PI / 2);
+            this.tweens.add({
+              targets: boat,
+              x: e.to.x * TILE_PX + off * 0.5,
+              y: e.to.y * TILE_PX,
+              duration: 900,
+              onComplete: () => this.tweens.add({ targets: boat, alpha: 0, duration: 600, delay: 400, onComplete: () => boat.destroy() }),
+            });
+          }
+          break;
+        }
+        case 'armyLost':
+          this.puff(e.x * TILE_PX, e.y * TILE_PX, 0x8a6a40, 10, 10);
+          break;
         case 'shot': {
           const fx = e.from.x * TILE_PX;
           const fy = e.from.y * TILE_PX;
@@ -676,6 +836,19 @@ export class WorldScene extends Phaser.Scene {
         this.hpBar(g, v.sprite.x, v.sprite.y - len * 0.6 - 4 * S, 18 * S, s.hp / max);
       }
       if (isSel || this.hoverShip === s.id) this.label(v.sprite.x, v.sprite.y - len * 0.6 - 8 * S, s.name, s.owner === me ? '#f1e3c2' : '#ffb59e');
+    }
+
+    const selectedArmies = new Set(sel.kind === 'armies' ? sel.ids : sel.kind === 'army' ? [sel.id] : []);
+    for (const a of state.armies) {
+      const p = this.armyPos(a.id);
+      if (!p) continue;
+      const color = toNumber(FACTION_COLOR(state, a.owner));
+      if (selectedArmies.has(a.id)) {
+        g.lineStyle(this.lw(), color, 1);
+        g.strokeEllipse(p.x, p.y, TILE_PX * 1.3, TILE_PX * 0.7);
+        if (a.owner === me) this.armyOrderLine(g, a, p);
+      }
+      this.label(p.x, p.y - TILE_PX * 0.55, `${Math.floor(a.soldiers)}`, a.owner === me ? '#f1e3c2' : '#ffb59e');
     }
 
     const selBuilding = this.ctl.selectedBuilding();
@@ -814,6 +987,32 @@ export class WorldScene extends Phaser.Scene {
     const g = this.overlay;
     g.lineStyle(this.lw(), ok ? 0x7dff7d : 0xff5a4a, 1);
     g.strokeRect(at.x * CELL_PX, at.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX);
+  }
+
+  private armyOrderLine(g: Phaser.GameObjects.Graphics, a: Army, p: Point): void {
+    const o = a.order;
+    let to: Point | null = null;
+    let c = 0xffffff;
+    if (o.type === 'city') {
+      const city = getCity(this.state, o.cityId);
+      if (city) to = { x: (city.cx + 0.5) * TILE_PX, y: (city.cy + 0.5) * TILE_PX };
+      c = city?.owner === this.ctl.me ? 0x7dff7d : 0xffcd75;
+    } else if (o.type === 'embark') {
+      const ship = this.state.ships.find((s) => s.id === o.shipId);
+      if (ship) to = { x: ship.x * TILE_PX, y: ship.y * TILE_PX };
+      c = 0x7dd3ff;
+    } else if (o.type === 'attackArmy') {
+      to = this.armyPos(o.targetId);
+      c = 0xff5a4a;
+    } else if (a.path.length) {
+      const end = a.path[a.path.length - 1];
+      to = { x: end.x * TILE_PX, y: end.y * TILE_PX };
+    }
+    if (!to) return;
+    g.lineStyle(this.lw(), c, 0.45);
+    g.lineBetween(p.x, p.y, to.x, to.y);
+    g.fillStyle(c, 0.8);
+    g.fillCircle(to.x, to.y, 1.5 * S);
   }
 
   /** Rotta commerciale della nave selezionata: tappe collegate in ciclo. */

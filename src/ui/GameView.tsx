@@ -2,12 +2,13 @@ import type { GameController } from '../game/controller';
 import { FACTIONS } from '../sim/factions';
 import { BUILDINGS, TICK_RATE } from '../sim/rules';
 import { playerBalance } from '../sim/simulation';
-import { getShip } from '../sim/state';
+import { getArmy, getShip } from '../sim/state';
 import { fmt, rate, useGame } from './hooks';
 import { Minimap } from './Minimap';
 import { BuildingPanel } from './panels/BuildingPanel';
 import { BuildMenu } from './panels/BuildMenu';
 import { ForeignShipPanel, ShipsPanel } from './panels/ShipPanel';
+import { ArmyPanel, ForeignArmyPanel } from './panels/ArmyPanel';
 import { useEffect, useState } from 'preact/hooks';
 import { HeroPanel } from './HeroCard';
 import { portraitUrl } from '../render/portrait';
@@ -68,8 +69,12 @@ export function GameView({ ctl, onExit, onLoad, loadError }: Props) {
   const foreignShip = sel.kind === 'ship' ? getShip(state, sel.id) : undefined;
   const focusCity = ctl.focusCity();
 
+  const armies = ctl.selectedArmies();
+  const foreignArmy = sel.kind === 'army' ? getArmy(state, sel.id) : undefined;
   let panel = null;
   if (ships.length) panel = <ShipsPanel ctl={ctl} ships={ships} />;
+  else if (armies.length) panel = <ArmyPanel ctl={ctl} armies={armies} />;
+  else if (foreignArmy) panel = <ForeignArmyPanel ctl={ctl} army={foreignArmy} />;
   else if (building) panel = <BuildingPanel key={building.id} ctl={ctl} building={building} />;
   else if (foreignShip) panel = <ForeignShipPanel ctl={ctl} ship={foreignShip} />;
   else if (heroOpen) panel = <HeroPanel ctl={ctl} />;
@@ -126,7 +131,7 @@ export function GameView({ ctl, onExit, onLoad, loadError }: Props) {
         <div class="panel mode-hint">Piazza: <b class="gold">{BUILDINGS[mode.kind].name}</b> — clic sinistro per costruire, destro o Esc per annullare</div>
       )}
       {mode.type === 'land' && (
-        <div class="panel mode-hint">Sbarco: clicca su una città nemica o neutrale — destro o Esc per annullare</div>
+        <div class="panel mode-hint">Sbarco: clicca su una costa per sbarcare i soldati a terra, o su una città nemica per assaltarla dal porto — destro o Esc per annullare</div>
       )}
 
       {panel && <div class="panel side interactive">{panel}</div>}

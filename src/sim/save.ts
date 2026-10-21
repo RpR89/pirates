@@ -76,5 +76,6 @@ export function deserializeGame(data: SavedGame): GameState {
   }
   if (s.buildings.some((b) => !BUILDINGS[b.kind])) throw new Error('Salvataggio danneggiato');
   s.heroes ??= [];
+  s.armies ??= [];
   return { ...s, map, events: [] };
 }

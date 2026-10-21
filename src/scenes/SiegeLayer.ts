@@ -40,7 +40,7 @@ export class SiegeLayer {
 
   constructor(private scene: Phaser.Scene, private state: () => GameState) {}
 
-  private lookKey(owner: PlayerId, militia = false): string {
+  lookKey(owner: PlayerId, militia = false): string {
     const faction = this.state().players[owner]?.faction ?? null;
     const id = `${militia ? 'militia' : faction ?? 'neutral'}`;
     for (const frame of [0, 1] as const) {
@@ -50,7 +50,7 @@ export class SiegeLayer {
     return `trooper-${id}`;
   }
 
-  private boatKey(owner: PlayerId): string {
+  boatKey(owner: PlayerId): string {
     const faction = this.state().players[owner]?.faction ?? null;
     const key = `rowboat-${faction ?? 'neutral'}`;
     if (!this.scene.textures.exists(key)) this.scene.textures.addCanvas(key, drawRowboat(troopLook(faction)).toCanvas());

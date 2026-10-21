@@ -48,6 +48,12 @@ export function Minimap({ ctl }: { ctl: GameController }) {
         g.fillStyle = FACTION_COLOR(state, s.owner);
         g.fillRect(Math.floor(s.x), Math.floor(s.y), 2, 2);
       }
+      for (const a of state.armies) {
+        g.fillStyle = '#1b1712';
+        g.fillRect(Math.floor(a.x) - 1, Math.floor(a.y) - 1, 3, 3);
+        g.fillStyle = FACTION_COLOR(state, a.owner);
+        g.fillRect(Math.floor(a.x), Math.floor(a.y), 1, 1);
+      }
       const v = ctl.view;
       g.strokeStyle = '#ffffff';
       g.lineWidth = 1;

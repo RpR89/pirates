@@ -82,6 +82,38 @@ export function findCoastalSites(map: TileMap): CoastalSite[] {
 }
 
 /** Casella di mare più vicina a (x, y) entro maxRadius, o null. */
+/** Terra percorribile a piedi (le rocce no). */
+export function isWalkable(map: TileMap, x: number, y: number): boolean {
+  return isLand(map, x, y) && tileAt(map, x, y) !== Tile.Rock;
+}
+
+/** Casella percorribile più vicina, o null. */
+export function nearestWalkable(map: TileMap, x: number, y: number, maxRadius = 8): Point | null {
+  return nearestWhere(map, x, y, maxRadius, isWalkable);
+}
+
+function nearestWhere(map: TileMap, x: number, y: number, maxRadius: number, ok: (map: TileMap, x: number, y: number) => boolean): Point | null {
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
+  for (let r = 0; r <= maxRadius; r++) {
+    let best: Point | null = null;
+    let bestD = Infinity;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (!ok(map, cx + dx, cy + dy)) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = { x: cx + dx, y: cy + dy };
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
 export function nearestSea(map: TileMap, x: number, y: number, maxRadius = 8): Point | null {
   const cx = Math.floor(x);
   const cy = Math.floor(y);

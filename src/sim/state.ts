@@ -81,7 +81,9 @@ export type ShipOrder =
   | { type: 'attackBuilding'; targetId: number }
   | { type: 'land'; cityId: number }
   | { type: 'found'; x: number; y: number }
-  | { type: 'trade' };
+  | { type: 'trade' }
+  /** Va verso la costa scelta e sbarca i soldati come reparto a terra. */
+  | { type: 'disembark'; x: number; y: number };
 
 /** Tappa di una rotta commerciale: nelle proprie città si carica, in quelle neutrali si vende. */
 export interface TradeStop {
@@ -121,6 +123,26 @@ export interface Ship {
   repath: number;
 }
 
+export type ArmyOrder =
+  | { type: 'idle' }
+  | { type: 'move' }
+  /** Verso una città: la propria la rinforza, le altre le assalta. */
+  | { type: 'city'; cityId: number }
+  | { type: 'embark'; shipId: number }
+  | { type: 'attackArmy'; targetId: number };
+
+/** Reparto di soldati a terra, fuori dalle città: si comanda come le navi. */
+export interface Army {
+  id: number;
+  owner: PlayerId;
+  x: number;
+  y: number;
+  soldiers: number;
+  path: Point[];
+  order: ArmyOrder;
+  repath: number;
+}
+
 export type GameEvent =
   | { type: 'shot'; from: Point; to: Point }
   | { type: 'shipSunk'; shipId: number; name: string; owner: PlayerId; by: PlayerId; x: number; y: number }
@@ -134,6 +156,8 @@ export type GameEvent =
   | { type: 'assaultFailed'; cityId: number; attacker: PlayerId; defender: PlayerId }
   | { type: 'cityCaptured'; cityId: number; from: PlayerId; to: PlayerId }
   | { type: 'cityFounded'; cityId: number; owner: PlayerId }
+  | { type: 'armyLanded'; armyId: number; owner: PlayerId; soldiers: number; from: Point; to: Point }
+  | { type: 'armyLost'; owner: PlayerId; x: number; y: number }
   | { type: 'traded'; shipId: number; owner: PlayerId; cityId: number; sold: boolean; wood: number; food: number; gold: number }
   | { type: 'famine'; owner: PlayerId }
   | { type: 'heroLost'; owner: PlayerId; reason: 'shipwreck' | 'captured' | 'cityLost' }
@@ -149,6 +173,8 @@ export interface GameState {
   cities: City[];
   buildings: Building[];
   ships: Ship[];
+  /** Reparti sbarcati a terra. */
+  armies: Army[];
   nextId: number;
   neutralNames: string[];
   /** Il capitano di ogni giocatore (neutrali esclusi). */
@@ -193,6 +219,10 @@ export function modifiers(state: GameState, owner: PlayerId) {
 
 export function getShip(state: GameState, id: number): Ship | undefined {
   return state.ships.find((s) => s.id === id);
+}
+
+export function getArmy(state: GameState, id: number): Army | undefined {
+  return state.armies.find((a) => a.id === id);
 }
 
 export function getCity(state: GameState, id: number): City | undefined {
@@ -622,6 +652,7 @@ export function createGame(seed: number, setups: PlayerSetup[], options: GameOpt
     cities: [],
     buildings: [],
     ships: [],
+    armies: [],
     nextId: 1,
     neutralNames: shuffle([...NEUTRAL_CITY_NAMES], rng),
     heroes: [],

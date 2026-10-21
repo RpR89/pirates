@@ -24,7 +24,15 @@ export type Command =
   /** Il capitano scende nella città dove la sua nave è in porto. */
   | { type: 'heroLand' }
   /** Imposta e avvia la rotta commerciale di una nave da carico (in ciclo). */
-  | { type: 'setRoute'; shipId: number; stops: TradeStop[] };
+  | { type: 'setRoute'; shipId: number; stops: TradeStop[] }
+  /** Le navi raggiungono la costa in (x, y) e sbarcano i soldati come reparto a terra. */
+  | { type: 'disembark'; shipIds: number[]; x: number; y: number }
+  | { type: 'armyMove'; armyIds: number[]; x: number; y: number }
+  /** Verso una città: la propria la rinforzano, le altre le assaltano. */
+  | { type: 'armyCity'; armyIds: number[]; cityId: number }
+  | { type: 'armyEmbark'; armyIds: number[]; shipId: number }
+  | { type: 'armyAttack'; armyIds: number[]; targetId: number }
+  | { type: 'armyStop'; armyIds: number[] };
 
 export interface PlayerCommand {
   player: PlayerId;

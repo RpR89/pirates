@@ -1,4 +1,6 @@
-import { isSea, nearestSea, type Point, type TileMap } from './map';
+import { isSea, isWalkable, nearestSea, nearestWalkable, type Point, type TileMap } from './map';
+
+type Passable = (map: TileMap, x: number, y: number) => boolean;
 
 const SQRT2 = 1.4142135623730951;
 const DIRS: readonly [number, number, number][] = [
@@ -58,19 +60,22 @@ class MinHeap {
 
 /** Il segmento resta in mare, con un piccolo margine dalla costa. */
 export function hasSeaLineOfSight(map: TileMap, a: Point, b: Point): boolean {
+  return lineOfSight(map, a, b, isSea, 0.3);
+}
+
+function lineOfSight(map: TileMap, a: Point, b: Point, ok: Passable, m: number): boolean {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const steps = Math.ceil(Math.sqrt(dx * dx + dy * dy) / 0.25);
-  const m = 0.3;
   for (let s = 0; s <= steps; s++) {
     const t = steps === 0 ? 0 : s / steps;
     const x = a.x + dx * t;
     const y = a.y + dy * t;
     if (
-      !isSea(map, Math.floor(x - m), Math.floor(y - m)) ||
-      !isSea(map, Math.floor(x + m), Math.floor(y - m)) ||
-      !isSea(map, Math.floor(x - m), Math.floor(y + m)) ||
-      !isSea(map, Math.floor(x + m), Math.floor(y + m))
+      !ok(map, Math.floor(x - m), Math.floor(y - m)) ||
+      !ok(map, Math.floor(x + m), Math.floor(y - m)) ||
+      !ok(map, Math.floor(x - m), Math.floor(y + m)) ||
+      !ok(map, Math.floor(x + m), Math.floor(y + m))
     ) {
       return false;
     }
@@ -83,11 +88,27 @@ export function hasSeaLineOfSight(map: TileMap, a: Point, b: Point): boolean {
  * Restituisce i waypoint (centri casella, semplificati) esclusa la partenza, o null.
  */
 export function findPath(map: TileMap, from: Point, to: Point): Point[] | null {
-  const start = isSea(map, Math.floor(from.x), Math.floor(from.y))
+  return search(map, from, to, isSea, nearestSea, 0.3);
+}
+
+/** A* a piedi sulla terraferma (rocce escluse), per i reparti sbarcati. */
+export function findLandPath(map: TileMap, from: Point, to: Point): Point[] | null {
+  return search(map, from, to, isWalkable, nearestWalkable, 0.2);
+}
+
+function search(
+  map: TileMap,
+  from: Point,
+  to: Point,
+  ok: Passable,
+  nearest: (map: TileMap, x: number, y: number, r: number) => Point | null,
+  margin: number,
+): Point[] | null {
+  const start = ok(map, Math.floor(from.x), Math.floor(from.y))
     ? { x: Math.floor(from.x), y: Math.floor(from.y) }
-    : nearestSea(map, from.x, from.y, 3);
-  const goalExact = isSea(map, Math.floor(to.x), Math.floor(to.y));
-  const goal = goalExact ? { x: Math.floor(to.x), y: Math.floor(to.y) } : nearestSea(map, to.x, to.y, 8);
+    : nearest(map, from.x, from.y, 3);
+  const goalExact = ok(map, Math.floor(to.x), Math.floor(to.y));
+  const goal = goalExact ? { x: Math.floor(to.x), y: Math.floor(to.y) } : nearest(map, to.x, to.y, 8);
   if (!start || !goal) return null;
 
   const w = map.width;
@@ -119,8 +140,8 @@ export function findPath(map: TileMap, from: Point, to: Point): Point[] | null {
     for (const [dx, dy, cost] of DIRS) {
       const nx = cx + dx;
       const ny = cy + dy;
-      if (!isSea(map, nx, ny)) continue;
-      if (dx !== 0 && dy !== 0 && (!isSea(map, cx + dx, cy) || !isSea(map, cx, cy + dy))) continue;
+      if (!ok(map, nx, ny)) continue;
+      if (dx !== 0 && dy !== 0 && (!ok(map, cx + dx, cy) || !ok(map, cx, cy + dy))) continue;
       const ni = ny * w + nx;
       if (closed[ni]) continue;
       const ng = g[cur] + cost;
@@ -147,7 +168,7 @@ export function findPath(map: TileMap, from: Point, to: Point): Point[] | null {
   let i = 0;
   while (i < raw.length) {
     let j = raw.length - 1;
-    while (j > i && !hasSeaLineOfSight(map, anchor, raw[j])) j--;
+    while (j > i && !lineOfSight(map, anchor, raw[j], ok, margin)) j--;
     path.push(raw[j]);
     anchor = raw[j];
     i = j + 1;

@@ -260,6 +260,33 @@ export const COMBAT = {
   minCrewEfficiency: 0.3,
 };
 
+/** Truppe sbarcate a terra: si muovono e combattono come reparti. */
+export const ARMY = {
+  speed: 1.1, // caselle al secondo
+  /** Distanza dal centro della città entro cui un reparto la assalta (o vi entra, se è tua). */
+  cityReach: 10,
+  /** Distanza da una propria nave per reimbarcarsi. */
+  embarkRange: 2.2,
+  /** Distanza dalla costa scelta entro cui una nave cala le scialuppe. */
+  landingRange: 3,
+  /** Distanza di mischia tra reparti nemici. */
+  meleeRange: 1.4,
+  /** Reparti dello stesso giocatore così vicini si uniscono. */
+  mergeRange: 1,
+  /** Torri e cannoni: uomini persi per punto di danno. */
+  menPerDamage: 0.12,
+};
+
+/** Riparazione delle navi ferme nel porto di una propria città. */
+export const REPAIR = {
+  /** Frazione dello scafo riparata al secondo. */
+  perSecond: 0.03,
+  /** Più veloce al molo di un cantiere navale. */
+  shipyardBonus: 2,
+  /** Legno speso per punto di scafo. */
+  woodPerHp: 0.15,
+};
+
 export const START = {
   gold: 300,
   wood: 250,

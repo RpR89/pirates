@@ -66,9 +66,14 @@ una tua città dopo un minuto.
   e quando esci; dal menu iniziale riprendi da *Riprendi una partita*.
 - **Guerra.** Clic destro per attaccare a cannonate. Con l'arrembaggio (`B`)
   catturi le navi, se i tuoi uomini sono più forti. Bombarda le torri e sbarca le
-  truppe (`L`) per conquistare le città: le scialuppe portano gli uomini a riva e
-  la battaglia con la guarnigione si vede sulla mappa. La nave coloniale fonda
-  nuove città.
+  truppe (`L`): clic su una città nemica per assaltarla dal porto, oppure su una
+  costa qualsiasi per far scendere i soldati a terra. I reparti a terra si
+  selezionano e si guidano come le navi: clic destro su un punto per marciare, su
+  una città nemica o neutrale per assaltarla, su una tua città per rinforzarla, su
+  una tua nave per reimbarcarsi, su un reparto nemico per attaccarlo. Le torri
+  sparano anche ai reparti che si avvicinano. La nave coloniale fonda nuove città.
+- **Riparazioni.** Una nave ferma nel porto di una tua città si ripara da sola
+  spendendo legno, il doppio più in fretta al molo del cantiere navale.
 
 | Comando | Azione |
 | --- | --- |
