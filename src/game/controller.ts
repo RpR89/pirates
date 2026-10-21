@@ -6,7 +6,9 @@ import { FACTIONS, FACTION_IDS, type FactionId } from '../sim/factions';
 import type { HeroProfile } from '../sim/hero';
 import type { Point } from '../sim/map';
 import { mulberry32, shuffle } from '../sim/rng';
-import { BUILDINGS, SHIPS, type BuildingKind } from '../sim/rules';
+import { BUILDINGS, SHIPS, TICK_RATE, type BuildingKind } from '../sim/rules';
+import { serializeGame } from '../sim/save';
+import type { SaveFile } from './saves';
 import {
   createGame,
   getBuilding,
@@ -15,6 +17,7 @@ import {
   type Building,
   type City,
   type GameEvent,
+  type GameState,
   type PlayerId,
   type Ship,
 } from '../sim/state';
@@ -68,15 +71,36 @@ export class GameController {
   private listeners = new Set<() => void>();
   private messageId = 0;
 
-  constructor(readonly setup: GameSetup) {
-    const rng = mulberry32(setup.seed ^ 0x5bd1e995);
-    const others = shuffle(FACTION_IDS.filter((f) => f !== setup.faction), rng).slice(0, setup.rivals);
-    const state = createGame(setup.seed, [
-      { name: setup.captain || 'Capitano', faction: setup.faction, hero: setup.hero },
-      ...others.map((f) => ({ name: FACTIONS[f].leader, faction: f })),
-    ]);
-    const ais = others.map((_, i) => new AIController(i + 2));
+  /** Centro iniziale della visuale (caselle), per le partite caricate. */
+  startView: Point | null = null;
+
+  /** Nuova partita da `setup`, oppure ripresa di una partita salvata (`loaded`). */
+  constructor(readonly setup: GameSetup, loaded?: GameState) {
+    let state = loaded;
+    if (!state) {
+      const rng = mulberry32(setup.seed ^ 0x5bd1e995);
+      const others = shuffle(FACTION_IDS.filter((f) => f !== setup.faction), rng).slice(0, setup.rivals);
+      state = createGame(setup.seed, [
+        { name: setup.captain || 'Capitano', faction: setup.faction, hero: setup.hero },
+        ...others.map((f) => ({ name: FACTIONS[f].leader, faction: f })),
+      ]);
+    }
+    // Tutti gli altri giocatori con una fazione sono IA.
+    const ais = state.players.filter((p) => p.id !== LOCAL_PLAYER && p.faction).map((p) => new AIController(p.id));
     this.session = new GameSession(state, LOCAL_PLAYER, new LocalTransport(), ais);
+  }
+
+  /** Fotografia della partita da salvare. */
+  saveFile(label: string): SaveFile {
+    return {
+      format: 'pirates-save',
+      label,
+      savedAt: new Date().toISOString(),
+      setup: this.setup,
+      minutes: Math.floor(this.state.tick / TICK_RATE / 60),
+      view: { x: this.view.x + this.view.w / 2, y: this.view.y + this.view.h / 2 },
+      game: serializeGame(this.state),
+    };
   }
 
   get state() {
@@ -225,6 +249,13 @@ export class GameController {
           if (ship) this.message(`Varata la ${ship.name} (${SHIPS[ship.cls].name}) a ${cityName(e.cityId)}`, 'good');
           break;
         }
+        case 'traded':
+          if (e.owner === me && e.sold) {
+            const ship = getShip(state, e.shipId);
+            const goods = [e.wood ? `${e.wood} legno` : '', e.food ? `${e.food} cibo` : ''].filter(Boolean).join(' e ');
+            this.message(`${ship?.name ?? 'La nave'} ha venduto ${goods} a ${cityName(e.cityId)}: +${Math.floor(e.gold)} oro`, 'good');
+          }
+          break;
         case 'recruited':
           if (e.owner === me) this.message(`${e.count} ${e.unit === 'sailors' ? 'marinai' : 'soldati'} arruolati a ${cityName(e.cityId)}`, 'info');
           break;

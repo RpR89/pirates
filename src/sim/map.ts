@@ -176,6 +176,11 @@ export function generateMap(seed: number, width = 280, height = 210): TileMap {
     }
   }
 
+  return mapFromTiles(width, height, tiles);
+}
+
+/** Ricostruisce la mappa (regioni d'acqua comprese) dalle sole caselle: serve anche ai salvataggi. */
+export function mapFromTiles(width: number, height: number, tiles: Uint8Array): TileMap {
   const region = new Int32Array(width * height).fill(-1);
   const sizes: number[] = [];
   const stack: number[] = [];

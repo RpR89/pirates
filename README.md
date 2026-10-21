@@ -54,6 +54,16 @@ una tua città dopo un minuto.
   nave coloniale) e scrivi il nome, o usi quello proposto dalla tua fazione.
   Ogni nave si può rinominare. I marinai la manovrano, i soldati combattono.
   In porto imbarchi e sbarchi gli uomini.
+- **Commercio.** Il Fluyt è una nave da carico: nel suo pannello imposti una
+  rotta commerciale con fino a 8 tappe, percorse in ciclo. In ogni tua città
+  scegli quanto legno e cibo caricare, in ogni città neutrale quanto venderne.
+  Ogni città neutrale paga prezzi diversi (li vedi cliccando sul suo municipio);
+  il prezzo scende man mano che vendi e risale mentre la città consuma la merce,
+  quindi conviene alternare più mercati. Attento ai nemici: un fluyt catturato
+  perde la rotta e il carico.
+- **Salvataggi.** *Menu* mette in pausa e permette di salvare, caricare,
+  esportare su file e importare. La partita si salva anche da sola ogni 2 minuti
+  e quando esci; dal menu iniziale riprendi da *Riprendi una partita*.
 - **Guerra.** Clic destro per attaccare a cannonate. Con l'arrembaggio (`B`)
   catturi le navi, se i tuoi uomini sono più forti. Bombarda le torri e sbarca le
   truppe (`L`) per conquistare le città: le scialuppe portano gli uomini a riva e

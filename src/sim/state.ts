@@ -11,6 +11,7 @@ import {
   START,
   SUB,
   type BuildingKind,
+  type Good,
   type ShipClass,
   ticks,
   type UnitKind,
@@ -50,6 +51,8 @@ export interface City {
   garrison: Crew;
   /** Truppe nemiche sbarcate che assediano la città. */
   siege: { owner: PlayerId; soldiers: number } | null;
+  /** Merci vendute di recente dalle rotte commerciali (fanno scendere i prezzi). */
+  market: Record<Good, number>;
 }
 
 export type QueueEntry =
@@ -77,7 +80,23 @@ export type ShipOrder =
   | { type: 'attackShip'; targetId: number; board: boolean }
   | { type: 'attackBuilding'; targetId: number }
   | { type: 'land'; cityId: number }
-  | { type: 'found'; x: number; y: number };
+  | { type: 'found'; x: number; y: number }
+  | { type: 'trade' };
+
+/** Tappa di una rotta commerciale: nelle proprie città si carica, in quelle neutrali si vende. */
+export interface TradeStop {
+  cityId: number;
+  load: Record<Good, number>;
+  sell: Record<Good, number>;
+}
+
+export interface TradeRoute {
+  stops: TradeStop[];
+  /** Indice della prossima tappa. */
+  next: number;
+  /** Tick di sosta rimasti nel porto della tappa (0 = in navigazione). */
+  wait: number;
+}
 
 export interface Ship {
   id: number;
@@ -90,6 +109,12 @@ export interface Ship {
   sailors: number;
   soldiers: number;
   colonists: number;
+  /** Merci nella stiva. */
+  cargo: Record<Good, number>;
+  /** Rotta commerciale impostata (resta anche se la nave riceve altri ordini). */
+  route: TradeRoute | null;
+  /** Oro guadagnato in totale con il commercio. */
+  earned: number;
   path: Point[];
   order: ShipOrder;
   cooldown: number;
@@ -109,6 +134,7 @@ export type GameEvent =
   | { type: 'assaultFailed'; cityId: number; attacker: PlayerId; defender: PlayerId }
   | { type: 'cityCaptured'; cityId: number; from: PlayerId; to: PlayerId }
   | { type: 'cityFounded'; cityId: number; owner: PlayerId }
+  | { type: 'traded'; shipId: number; owner: PlayerId; cityId: number; sold: boolean; wood: number; food: number; gold: number }
   | { type: 'famine'; owner: PlayerId }
   | { type: 'heroLost'; owner: PlayerId; reason: 'shipwreck' | 'captured' | 'cityLost' }
   | { type: 'heroReturned'; owner: PlayerId; cityId: number }
@@ -500,6 +526,9 @@ export function spawnShip(
     sailors: crew.sailors ?? SHIPS[cls].crew,
     soldiers: crew.soldiers ?? 0,
     colonists: 0,
+    cargo: { wood: 0, food: 0 },
+    route: null,
+    earned: 0,
     path: [],
     order: { type: 'idle' },
     cooldown: 0,
@@ -540,6 +569,7 @@ export function addCity(state: GameState, owner: PlayerId, cx: number, cy: numbe
     population,
     garrison: { ...garrison },
     siege: null,
+    market: { wood: 0, food: 0 },
   };
   state.cities.push(city);
   const at = municipioOrigin(cx, cy);
@@ -647,7 +677,7 @@ function findPlacementForNewCity(state: GameState, p: Point): boolean {
     }
   }
   if (free < 150) return false;
-  const probe: City = { id: -1, owner: -1, name: '', cx: p.x, cy: p.y, dock: p, population: 0, garrison: { sailors: 0, soldiers: 0 }, siege: null };
+  const probe: City = { id: -1, owner: -1, name: '', cx: p.x, cy: p.y, dock: p, population: 0, garrison: { sailors: 0, soldiers: 0 }, siege: null, market: { wood: 0, food: 0 } };
   state.cities.push(probe);
   const id = state.nextId;
   const at = municipioOrigin(p.x, p.y);

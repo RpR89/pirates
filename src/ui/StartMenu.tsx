@@ -1,5 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { GameSetup } from '../game/controller';
+import { listSaves, type SaveFile } from '../game/saves';
+import { ImportButton, SaveList } from './SaveMenu';
 import { FACTIONS, FACTION_IDS, MAX_NAME_LENGTH, type FactionId } from '../sim/factions';
 import { generateHero } from '../sim/hero';
 import { Flag } from './common';
@@ -7,7 +9,15 @@ import { HeroSheet } from './HeroCard';
 
 const randomSeed = () => Math.floor(Math.random() * 1e9) + 1;
 
-export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) {
+interface Props {
+  onStart: (setup: GameSetup) => void;
+  onLoad: (file: SaveFile) => void;
+  loadError: string | null;
+}
+
+export function StartMenu({ onStart, onLoad, loadError }: Props) {
+  const [error, setError] = useState<string | null>(null);
+  const hasSaves = listSaves().length > 0;
   const [faction, setFaction] = useState<FactionId>('pirati');
   const [captain, setCaptain] = useState('');
   const [rivals, setRivals] = useState(2);
@@ -92,6 +102,15 @@ export function StartMenu({ onStart }: { onStart: (setup: GameSetup) => void }) 
               Salpa!
             </button>
           </div>
+        </div>
+
+        <div class="panel mt" style={{ marginTop: 12 }}>
+          <div class="row spread">
+            <h2>Riprendi una partita</h2>
+            <ImportButton onLoad={onLoad} onError={setError} />
+          </div>
+          {hasSaves ? <SaveList onLoad={onLoad} onError={setError} /> : <div class="sub">Nessuna partita salvata: durante il gioco usa Menu → Salva, o importa un file esportato.</div>}
+          {(error ?? loadError) && <div class="sub bad mt">{error ?? loadError}</div>}
         </div>
 
         <div class="panel mt sub" style={{ marginTop: 12, lineHeight: 1.5 }}>

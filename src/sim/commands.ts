@@ -1,5 +1,5 @@
 import type { BuildingKind, ShipClass, UnitKind } from './rules';
-import type { PlayerId } from './state';
+import type { PlayerId, TradeStop } from './state';
 
 /**
  * Tutto ciò che un giocatore (umano, IA o remoto) può fare passa da qui.
@@ -22,7 +22,9 @@ export type Command =
   /** Il capitano sale sulla nave (in porto nella città dove si trova). */
   | { type: 'heroBoard'; shipId: number }
   /** Il capitano scende nella città dove la sua nave è in porto. */
-  | { type: 'heroLand' };
+  | { type: 'heroLand' }
+  /** Imposta e avvia la rotta commerciale di una nave da carico (in ciclo). */
+  | { type: 'setRoute'; shipId: number; stops: TradeStop[] };
 
 export interface PlayerCommand {
   player: PlayerId;

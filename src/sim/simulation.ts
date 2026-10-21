@@ -13,11 +13,14 @@ import {
   SHIPS,
   FORTIFICATIONS,
   SUB,
+  GOODS,
   TICK_RATE,
+  TRADE,
   UNITS,
   ticks,
   type BuildingKind,
   type Cost,
+  type Good,
   type ShipClass,
   type UnitKind,
 } from './rules';
@@ -57,6 +60,7 @@ import {
   type Player,
   type PlayerId,
   type Ship,
+  type TradeStop,
 } from './state';
 
 /**
@@ -352,6 +356,147 @@ function applyCommand(state: GameState, player: PlayerId, cmd: Command): void {
       if (ship && name) ship.name = name;
       break;
     }
+    case 'setRoute': {
+      if (routeProblem(state, player, cmd.shipId, cmd.stops)) return;
+      const ship = getShip(state, cmd.shipId)!;
+      const whole = (n: number) => Math.max(0, Math.floor(n));
+      ship.route = {
+        stops: cmd.stops.map((s) => ({
+          cityId: s.cityId,
+          load: { wood: whole(s.load.wood), food: whole(s.load.food) },
+          sell: { wood: whole(s.sell.wood), food: whole(s.sell.food) },
+        })),
+        next: 0,
+        wait: 0,
+      };
+      ship.order = { type: 'trade' };
+      ship.path = [];
+      ship.repath = 0;
+      break;
+    }
+  }
+}
+
+// ================================================================ commercio
+
+/** Motivo per cui la rotta non è valida, o null. */
+export function routeProblem(state: GameState, player: PlayerId, shipId: number, stops: readonly TradeStop[]): string | null {
+  const ship = getShip(state, shipId);
+  if (!ship || ship.owner !== player || ship.hp <= 0) return 'Non è una tua nave';
+  if (SHIPS[ship.cls].cargo <= 0) return 'Solo le navi da carico seguono le rotte commerciali';
+  if (!Array.isArray(stops) || stops.length === 0) return 'Aggiungi almeno una tappa';
+  if (stops.length > TRADE.maxStops) return `Al massimo ${TRADE.maxStops} tappe`;
+  for (const s of stops) {
+    const city = getCity(state, s?.cityId);
+    if (!city) return 'Città inesistente';
+    if (city.owner !== player && city.owner !== NEUTRAL) return `${city.name} non commercia con te`;
+    for (const g of GOODS) {
+      for (const n of [s.load?.[g], s.sell?.[g]]) {
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > SHIPS[ship.cls].cargo) return 'Quantità non valida';
+      }
+    }
+  }
+  return null;
+}
+
+/** Moltiplicatore fisso della domanda di una città per una merce (tra demandMin e demandMax). */
+export function demandFactor(city: City, good: Good): number {
+  let h = Math.imul(city.id ^ (good === 'wood' ? 0x2c1b3c6d : 0x297a2d39), 0x9e3779b1);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  const t = ((h >>> 0) % 1001) / 1000;
+  return TRADE.demandMin + (TRADE.demandMax - TRADE.demandMin) * t;
+}
+
+function saturation(city: City): number {
+  return TRADE.saturationBase + city.population * TRADE.saturationPerCitizen;
+}
+
+/** Prezzo attuale in oro di un'unità di merce venduta a una città neutrale. */
+export function tradePrice(city: City, good: Good, extraStock = 0): number {
+  const share = Math.max(TRADE.minPriceShare, 1 - (city.market[good] + extraStock) / saturation(city));
+  return TRADE.basePrice[good] * demandFactor(city, good) * share;
+}
+
+/** Oro ricavato vendendo n unità (il prezzo scende a ogni unità venduta). */
+export function saleValue(city: City, good: Good, n: number): number {
+  let gold = 0;
+  for (let i = 0; i < n; i++) gold += tradePrice(city, good, i);
+  return gold;
+}
+
+function cargoLoad(ship: Ship): number {
+  return ship.cargo.wood + ship.cargo.food;
+}
+
+/** Carica o vende alla tappa raggiunta. */
+function tradeAt(state: GameState, ship: Ship, city: City, stop: TradeStop): void {
+  const player = state.players[ship.owner];
+  const moved = { wood: 0, food: 0 };
+  let gold = 0;
+  let sold = false;
+  if (city.owner === ship.owner) {
+    for (const g of GOODS) {
+      const room = SHIPS[ship.cls].cargo - cargoLoad(ship);
+      const n = Math.max(0, Math.min(stop.load[g], room, Math.floor(player[g])));
+      ship.cargo[g] += n;
+      player[g] -= n;
+      moved[g] = n;
+    }
+  } else if (city.owner === NEUTRAL && city.siege?.owner !== ship.owner) {
+    sold = true;
+    for (const g of GOODS) {
+      const n = Math.max(0, Math.min(stop.sell[g], Math.floor(ship.cargo[g])));
+      const value = saleValue(city, g, n);
+      ship.cargo[g] -= n;
+      city.market[g] += n;
+      gold += value;
+      moved[g] = n;
+    }
+    player.gold += gold;
+    ship.earned += gold;
+  } else {
+    return;
+  }
+  if (moved.wood > 0 || moved.food > 0) {
+    state.events.push({ type: 'traded', shipId: ship.id, owner: ship.owner, cityId: city.id, sold, wood: moved.wood, food: moved.food, gold });
+  }
+}
+
+function updateTrade(state: GameState, ship: Ship): void {
+  const route = ship.route;
+  if (!route || route.stops.length === 0) {
+    idle(ship);
+    return;
+  }
+  route.next %= route.stops.length;
+  const stop = route.stops[route.next];
+  const city = getCity(state, stop.cityId);
+  const advance = () => {
+    route.next = (route.next + 1) % route.stops.length;
+    route.wait = 0;
+  };
+  if (!city) {
+    advance();
+    return;
+  }
+  if (route.wait > 0) {
+    ship.path = [];
+    if (--route.wait === 0) {
+      tradeAt(state, ship, city, stop);
+      advance();
+    }
+    return;
+  }
+  const dock = { x: city.dock.x + 0.5, y: city.dock.y + 0.5 };
+  if (distance(ship, dock) <= COMBAT.dockRange) {
+    ship.path = [];
+    route.wait = ticks(TRADE.stopSeconds);
+  } else {
+    chase(state, ship, dock);
+    // Porto irraggiungibile (per esempio in un lago): salta la tappa.
+    if (ship.path.length === 0 && distance(ship, dock) > COMBAT.dockRange + 1.5) advance();
   }
 }
 
@@ -410,6 +555,10 @@ function updateCity(state: GameState, city: City): void {
     }
   }
   if (city.siege) resolveAssault(state, city);
+  // Le città consumano le merci comprate: i prezzi risalgono piano piano.
+  for (const g of GOODS) {
+    if (city.market[g] > 0) city.market[g] = Math.max(0, city.market[g] - (city.population * TRADE.consumption[g]) / TICK_RATE);
+  }
 }
 
 export interface Fortifications {
@@ -713,6 +862,9 @@ function updateShip(state: GameState, ship: Ship, ctx: TickContext): void {
       if (ship.path.length === 0) idle(ship);
       break;
     }
+    case 'trade':
+      updateTrade(state, ship);
+      break;
   }
 
   moveAlongPath(state, ship);
@@ -800,6 +952,7 @@ function resolveBoarding(state: GameState, ship: Ship, target: Ship): void {
     target.sailors = prizeCrew;
     target.soldiers = 0;
     target.colonists = 0;
+    target.route = null; // il carico resta al vincitore, la rotta no
     ship.sailors -= prizeCrew;
     idle(target);
     const captain = heroOnShip(state, target.id);

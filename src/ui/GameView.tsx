@@ -13,10 +13,36 @@ import { HeroPanel } from './HeroCard';
 import { portraitUrl } from '../render/portrait';
 import { heroLevel } from '../sim/hero';
 import { heroOf } from '../sim/state';
+import type { SaveFile } from '../game/saves';
+import { GameMenu, autosave } from './SaveMenu';
 
-export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => void }) {
+interface Props {
+  ctl: GameController;
+  onExit: () => void;
+  onLoad: (file: SaveFile) => void;
+  loadError: string | null;
+}
+
+export function GameView({ ctl, onExit, onLoad, loadError }: Props) {
   useGame(ctl);
   const [buildOpen, setBuildOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Salvataggio automatico ogni 2 minuti di gioco reale (non in pausa).
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (ctl.session.paused) return;
+      const error = autosave(ctl);
+      if (error) ctl.message(`Salvataggio automatico non riuscito: ${error}`, 'bad');
+    }, 120_000);
+    return () => window.clearInterval(timer);
+  }, [ctl]);
+  useEffect(() => {
+    if (loadError) ctl.message(`Caricamento non riuscito: ${loadError}`, 'bad');
+  }, [loadError]);
+  const exit = () => {
+    autosave(ctl);
+    onExit();
+  };
   const [heroOpen, setHeroOpen] = useState(false);
   // I pannelli aperti dai pulsanti si chiudono quando si seleziona qualcosa sulla mappa.
   useEffect(() => {
@@ -93,7 +119,7 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
           {ctl.session.paused ? 'PAUSA · ' : ''}{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
         </span>
         <button class="small" onClick={() => ctl.togglePause()}>{ctl.session.paused ? 'Riprendi' : 'Pausa'}</button>
-        <button class="small" onClick={onExit}>Menu</button>
+        <button class="small" onClick={() => setMenuOpen(true)}>Menu</button>
       </div>
 
       {mode.type === 'place' && (
@@ -137,6 +163,8 @@ export function GameView({ ctl, onExit }: { ctl: GameController; onExit: () => v
           </button>
         </div>
       </div>
+
+      {menuOpen && <GameMenu ctl={ctl} onClose={() => setMenuOpen(false)} onExit={exit} onLoad={onLoad} />}
 
       {state.winner !== null && (
         <div class="overlay">

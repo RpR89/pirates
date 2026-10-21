@@ -21,8 +21,8 @@ export interface Cost {
 
 // ------------------------------------------------------------------ navi
 
-export type ShipClass = 'sloop' | 'brigantino' | 'fregata' | 'galeone' | 'mercantile';
-export const SHIP_CLASSES: readonly ShipClass[] = ['sloop', 'brigantino', 'fregata', 'galeone', 'mercantile'];
+export type ShipClass = 'sloop' | 'brigantino' | 'fregata' | 'galeone' | 'mercantile' | 'fluyt';
+export const SHIP_CLASSES: readonly ShipClass[] = ['sloop', 'brigantino', 'fregata', 'galeone', 'fluyt', 'mercantile'];
 
 export interface ShipStats {
   name: string;
@@ -40,6 +40,8 @@ export interface ShipStats {
   capacity: number;
   /** Coloni imbarcati al varo (solo mercantile): fondano una nuova città. */
   colonists: number;
+  /** Stiva per le merci (legno + cibo) delle rotte commerciali; 0 = niente commercio. */
+  cargo: number;
   /** Dimensione minima della città (vedi CITY_TIERS). */
   tier: number;
   /** Dimensioni dello scafo visto dall'alto, in caselle (solo per la grafica). */
@@ -53,36 +55,69 @@ export const SHIPS: Record<ShipClass, ShipStats> = {
     description: 'Piccolo e veloce, ideale per esplorare e cacciare mercantili.',
     cost: { gold: 80, wood: 60 }, buildSeconds: 12,
     hp: 100, damage: 6, range: 4.5, reloadSeconds: 1.5, speed: 4.59,
-    crew: 8, capacity: 20, colonists: 0, tier: 1, length: 1.5, beam: 0.625,
+    crew: 8, capacity: 20, colonists: 0, cargo: 0, tier: 1, length: 1.5, beam: 0.625,
   },
   brigantino: {
     name: 'Brigantino',
     description: 'Due alberi, buon equilibrio tra cannoni, velocità e truppe.',
     cost: { gold: 160, wood: 120 }, buildSeconds: 20,
     hp: 180, damage: 10, range: 5, reloadSeconds: 1.8, speed: 3.92,
-    crew: 15, capacity: 40, colonists: 0, tier: 2, length: 1.875, beam: 0.75,
+    crew: 15, capacity: 40, colonists: 0, cargo: 0, tier: 2, length: 1.875, beam: 0.75,
   },
   fregata: {
     name: 'Fregata',
     description: 'Nave da guerra rapida con una lunga batteria di cannoni.',
     cost: { gold: 300, wood: 220 }, buildSeconds: 30,
     hp: 300, damage: 16, range: 6, reloadSeconds: 2, speed: 3.51,
-    crew: 30, capacity: 70, colonists: 0, tier: 3, length: 2.375, beam: 0.875,
+    crew: 30, capacity: 70, colonists: 0, cargo: 0, tier: 3, length: 2.375, beam: 0.875,
   },
   galeone: {
     name: 'Galeone',
     description: 'Una fortezza galleggiante: lento, ma porta un esercito.',
     cost: { gold: 420, wood: 320 }, buildSeconds: 40,
     hp: 450, damage: 20, range: 5.5, reloadSeconds: 2.8, speed: 2.43,
-    crew: 40, capacity: 120, colonists: 0, tier: 3, length: 2.75, beam: 1.125,
+    crew: 40, capacity: 120, colonists: 0, cargo: 0, tier: 3, length: 2.75, beam: 1.125,
   },
   mercantile: {
     name: 'Nave coloniale',
     description: 'Trasporta coloni per fondare una nuova città su una costa libera.',
     cost: { gold: 150, wood: 150 }, buildSeconds: 20,
     hp: 120, damage: 0, range: 0, reloadSeconds: 0, speed: 3.24,
-    crew: 6, capacity: 20, colonists: 15, tier: 1, length: 1.875, beam: 0.875,
+    crew: 6, capacity: 20, colonists: 15, cargo: 0, tier: 1, length: 1.875, beam: 0.875,
   },
+  fluyt: {
+    name: 'Fluyt',
+    description: 'Nave da carico olandese: porta legno e cibo alle città neutrali e torna carica d’oro. Seguono una rotta commerciale.',
+    cost: { gold: 90, wood: 110 }, buildSeconds: 16,
+    hp: 130, damage: 0, range: 0, reloadSeconds: 0, speed: 3.3,
+    crew: 6, capacity: 10, colonists: 0, cargo: 150, tier: 1, length: 2.125, beam: 0.875,
+  },
+};
+
+// ------------------------------------------------------------------ commercio
+
+export type Good = 'wood' | 'food';
+export const GOODS: readonly Good[] = ['wood', 'food'];
+
+export const TRADE = {
+  /** Prezzo base in oro di un'unità di merce. */
+  basePrice: { wood: 0.9, food: 1.2 } as Record<Good, number>,
+  /**
+   * Ogni città neutrale paga di più o di meno a seconda di ciò che le manca:
+   * il prezzo base è moltiplicato per un valore fisso tra questi due.
+   */
+  demandMin: 0.7,
+  demandMax: 1.5,
+  /** Merce che una città assorbe prima che il prezzo crolli: base + per abitante. */
+  saturationBase: 80,
+  saturationPerCitizen: 3,
+  /** Il prezzo scende man mano che si vende, fino a questa frazione del pieno. */
+  minPriceShare: 0.2,
+  /** Merce consumata dalla città, per abitante e al secondo: il prezzo risale. */
+  consumption: { wood: 0.012, food: 0.025 } as Record<Good, number>,
+  /** Sosta in porto per caricare o vendere. */
+  stopSeconds: 4,
+  maxStops: 8,
 };
 
 // ------------------------------------------------------------------ edifici

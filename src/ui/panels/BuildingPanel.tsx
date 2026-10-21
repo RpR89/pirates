@@ -21,6 +21,7 @@ import { fmt, rate } from '../hooks';
 import { BarracksPanel } from './BarracksPanel';
 import { BuildMenu, defenseSummary } from './BuildMenu';
 import { ShipyardPanel } from './ShipyardPanel';
+import { Market } from './TradePanel';
 
 export function BuildingPanel({ ctl, building }: { ctl: GameController; building: Building }) {
   const [showBuild, setShowBuild] = useState(false);
@@ -169,6 +170,7 @@ function ForeignCity({ ctl, city, building }: { ctl: GameController; city: City;
         imbarca soldati e usa <b>Sbarca truppe</b> (<kbd>L</kbd>): servono più della guarnigione, e la milizia
         degli abitanti ({fmt(city.population * CITY.militiaPerCitizen)}) e le torri resistono finché gli assalitori non sono abbastanza.
       </div>
+      {city.owner === NEUTRAL && <Market city={city} />}
       {city.siege && <div class="card mt">Assedio in corso: {Math.ceil(city.siege.soldiers)} soldati di {state.players[city.siege.owner].name}.</div>}
     </div>
   );

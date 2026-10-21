@@ -114,7 +114,8 @@ export class WorldScene extends Phaser.Scene {
     cam.setBackgroundColor('#1f4f80');
     this.ctl.centerOn = (p) => cam.centerOn(p.x * TILE_PX, p.y * TILE_PX);
     const home = this.state.cities.find((c) => c.owner === this.ctl.me);
-    if (home) this.ctl.centerOn({ x: home.cx + 0.5, y: home.cy + 2 });
+    if (this.ctl.startView) this.ctl.centerOn(this.ctl.startView);
+    else if (home) this.ctl.centerOn({ x: home.cx + 0.5, y: home.cy + 2 });
 
     this.setupInput();
   }
@@ -612,6 +613,13 @@ export class WorldScene extends Phaser.Scene {
           this.puff(e.x * TILE_PX, e.y * TILE_PX, 0x8a6a40, 14, 14);
           for (let i = 0; i < 5; i++) this.smoke(e.x * TILE_PX + (Math.random() - 0.5) * 10, e.y * TILE_PX);
           break;
+        case 'traded': {
+          const city = getCity(this.state, e.cityId);
+          if (city && e.owner === this.ctl.me && e.sold && e.gold >= 1) {
+            this.floatText((city.dock.x + 0.5) * TILE_PX, city.dock.y * TILE_PX - 8 * S, `+${Math.floor(e.gold)} oro`, '#ffcd75');
+          }
+          break;
+        }
         case 'cityCaptured':
         case 'cityFounded': {
           const city = getCity(this.state, e.cityId);
@@ -659,7 +667,10 @@ export class WorldScene extends Phaser.Scene {
       if (isSel) {
         g.lineStyle(this.lw(), color, 1);
         g.strokeCircle(v.sprite.x, v.sprite.y, len * 0.6);
-        if (s.owner === me) this.orderLine(g, s, v.sprite.x, v.sprite.y);
+        if (s.owner === me) {
+          this.routeLine(g, s);
+          this.orderLine(g, s, v.sprite.x, v.sprite.y);
+        }
       }
       if (isSel || s.hp < max || this.hoverShip === s.id) {
         this.hpBar(g, v.sprite.x, v.sprite.y - len * 0.6 - 4 * S, 18 * S, s.hp / max);
@@ -805,6 +816,29 @@ export class WorldScene extends Phaser.Scene {
     g.strokeRect(at.x * CELL_PX, at.y * CELL_PX, s.w * CELL_PX, s.h * CELL_PX);
   }
 
+  /** Rotta commerciale della nave selezionata: tappe collegate in ciclo. */
+  private routeLine(g: Phaser.GameObjects.Graphics, s: Ship): void {
+    const docks = (s.route?.stops ?? [])
+      .map((stop) => getCity(this.state, stop.cityId))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .map((c) => ({ x: (c.dock.x + 0.5) * TILE_PX, y: (c.dock.y + 0.5) * TILE_PX }));
+    if (!docks.length) return;
+    g.lineStyle(this.lw(), 0xffcd75, s.order.type === 'trade' ? 0.35 : 0.18);
+    for (let i = 0; i < docks.length && docks.length > 1; i++) {
+      const a = docks[i];
+      const b = docks[(i + 1) % docks.length];
+      // Tratteggio: la rotta in linea d'aria, non il percorso vero.
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const dash = 10 * S;
+      for (let t = 0; t < len; t += dash * 2) {
+        const t1 = Math.min(len, t + dash);
+        g.lineBetween(a.x + ((b.x - a.x) * t) / len, a.y + ((b.y - a.y) * t) / len, a.x + ((b.x - a.x) * t1) / len, a.y + ((b.y - a.y) * t1) / len);
+      }
+    }
+    g.fillStyle(0xffcd75, 0.9);
+    for (const d of docks) g.fillCircle(d.x, d.y, 2.5 * S);
+  }
+
   private orderLine(g: Phaser.GameObjects.Graphics, s: Ship, x: number, y: number): void {
     const state = this.state;
     let to: Point | null = null;
@@ -820,6 +854,11 @@ export class WorldScene extends Phaser.Scene {
       c = 0xff5a4a;
     } else if (o.type === 'land') {
       const city = getCity(state, o.cityId);
+      if (city) to = { x: (city.dock.x + 0.5) * TILE_PX, y: (city.dock.y + 0.5) * TILE_PX };
+      c = 0xffcd75;
+    } else if (o.type === 'trade') {
+      const stop = s.route?.stops[s.route.next];
+      const city = stop && getCity(state, stop.cityId);
       if (city) to = { x: (city.dock.x + 0.5) * TILE_PX, y: (city.dock.y + 0.5) * TILE_PX };
       c = 0xffcd75;
     } else if (s.path.length) {

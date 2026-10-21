@@ -35,6 +35,7 @@ const PLANS: Record<ShipClass, ShipPlan> = {
   fregata: { masts: [0.23, 0.46, 0.69], sailWidth: 11, guns: 9, stripe: true, cargo: false, jib: true, boat: true },
   galeone: { masts: [0.23, 0.45, 0.67], sailWidth: 12, guns: 10, stripe: true, cargo: false, jib: false, boat: true },
   mercantile: { masts: [0.3, 0.64], sailWidth: 9, guns: 0, stripe: false, cargo: true, jib: false, boat: false },
+  fluyt: { masts: [0.24, 0.5, 0.74], sailWidth: 9, guns: 0, stripe: false, cargo: true, jib: true, boat: true },
 };
 
 const DECK = '#bf8f55';

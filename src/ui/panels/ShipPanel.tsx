@@ -6,6 +6,7 @@ import { boardingStrength, dockedCity } from '../../sim/simulation';
 import { crewEfficiency, getBuilding, getCity, getShip, shipMaxHp, shipMen, type Ship } from '../../sim/state';
 import { Bar, Stat } from '../common';
 import { HeroShipActions } from '../HeroCard';
+import { TradePanel } from './TradePanel';
 import { fmt } from '../hooks';
 
 function orderText(ctl: GameController, s: Ship): string {
@@ -21,6 +22,12 @@ function orderText(ctl: GameController, s: Ship): string {
     }
     case 'land': return `Sbarco a ${getCity(state, o.cityId)?.name ?? '—'}`;
     case 'found': return 'Verso il sito della nuova città';
+    case 'trade': {
+      const r = s.route;
+      const stop = r?.stops[r.next];
+      const name = stop ? getCity(state, stop.cityId)?.name ?? '—' : '—';
+      return r && r.wait > 0 ? `In porto a ${name}` : `Rotta commerciale: verso ${name}`;
+    }
   }
 }
 
@@ -107,6 +114,7 @@ function SingleShip({ ctl, ship }: { ctl: GameController; ship: Ship }) {
       {ship.colonists > 0 && <div class="card mt gold">{ship.colonists} coloni a bordo: clic destro su una costa libera per fondare una città.</div>}
       {ship.sailors < s.crew && <div class="sub bad">Pochi marinai: la nave è lenta e ricarica piano. Imbarcane altri in porto.</div>}
 
+      {s.cargo > 0 && <TradePanel ctl={ctl} ship={ship} />}
       <HeroShipActions ctl={ctl} ship={ship} />
       {docked ? <Transfer ctl={ctl} ship={ship} cityId={docked.id} /> : <div class="sub mt">Avvicinati al porto di una tua città per imbarcare o sbarcare uomini.</div>}
     </div>
